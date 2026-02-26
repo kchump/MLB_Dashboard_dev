@@ -16,6 +16,100 @@
    ============================================================================= */
 const page_cache = new Map();
 
+let year_page_lookup = null;
+
+function safe_page_filename(s) {
+  const raw = String(s || '').trim();
+  const out = raw.replace(/[^a-zA-Z0-9_\-\.]+/g, '_').replace(/^_+|_+$/g, '');
+  return out || 'page';
+}
+
+async function load_year_page_lookup() {
+  if (year_page_lookup !== null) return year_page_lookup;
+
+  try {
+    const r = await fetch('assets/year_page_lookup.json', { cache: 'no-store' });
+    if (!r.ok) {
+      year_page_lookup = {};
+      return year_page_lookup;
+    }
+    year_page_lookup = await r.json();
+    return year_page_lookup;
+  } catch (e) {
+    year_page_lookup = {};
+    return year_page_lookup;
+  }
+}
+
+function render_year_select_in_content(content_root) {
+  if (!content_root || !year_page_lookup) return;
+
+  const year_blocks = Array.from(content_root.querySelectorAll('.year_buttons'));
+  if (!year_blocks.length) return;
+
+  const years = Object.keys(year_page_lookup).sort().reverse();
+  const current_year = years.length ? years[0] : '';
+
+  year_blocks.forEach(el => {
+    const person_key = (el.getAttribute('data-person_key') || '').trim();
+    const role = (el.getAttribute('data-role') || '').trim();
+
+    el.innerHTML = '';
+    if (!person_key || !role) return;
+
+    const active_file = (document.querySelector('.toc_link.active')?.dataset.file || '');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'year_select_wrap';
+
+    const label = document.createElement('div');
+    label.className = 'year_select_label';
+    label.textContent = 'Year';
+
+    const sel = document.createElement('select');
+    sel.className = 'year_select';
+
+    function add_opt(text, file, is_selected) {
+      const o = document.createElement('option');
+      o.value = file;
+      o.textContent = text;
+      if (is_selected) o.selected = true;
+      sel.appendChild(o);
+    }
+
+    // Build options:
+    // - Current year appears as "Current" and points to the current-year page file.
+    // - Historical years appear as their numeric year.
+    years.forEach(y => {
+      const role_map = (year_page_lookup[y] || {})[role] || {};
+      const file = role_map[person_key];
+      if (!file) return;
+
+      const is_current = (String(y) === String(current_year));
+      const label_text = is_current ? 'Current' : String(y);
+      const is_selected = (file === active_file);
+
+      add_opt(label_text, file, is_selected);
+    });
+
+    // If we didn’t match active_file (edge case), default to first option
+    if (!sel.querySelector('option[selected]') && sel.options.length) {
+      sel.selectedIndex = 0;
+    }
+
+    sel.addEventListener('change', (e) => {
+      e.preventDefault();
+      const file = sel.value;
+      if (!file) return;
+      load_page(file, (document.querySelector('.toc_link.active')?.dataset.page || ''));
+    });
+
+    wrap.appendChild(label);
+    wrap.appendChild(sel);
+    el.appendChild(wrap);
+  });
+}
+
 function team_storage_key(team) {
   return 'mlb_dash_team_open__' + team;
 }
@@ -77,6 +171,13 @@ async function load_page(file, page_id) {
   links.forEach(a => a.classList.toggle('active', a.dataset.page === page_id));
 
   try { localStorage.setItem('mlb_dash_active_page', page_id); } catch (e) {}
+
+  // Year buttons (current player page -> historical page links)
+  await load_year_page_lookup();
+  render_year_select_in_content(content);
+
+  // If this is a matchups/static meta page, wire its JS here too (see section 3D)
+  init_matchups_page_if_present(content);
 
   // Warm a couple pages ahead (best-effort)
   const active = document.querySelector(`.toc_link[data-page="${page_id}"]`);
@@ -406,6 +507,340 @@ function apply_mobile_scale() {
   content.style.transform = `scale(${scale})`;
   content.style.transformOrigin = 'top left';
   content.style.width = `${Math.ceil(1350 * scale)}px`;
+}
+
+const matchups_cache = new Map();
+let matchups_index = null;
+
+async function load_matchups_index() {
+  if (matchups_index !== null) return matchups_index;
+
+  try {
+    const r = await fetch('assets/matchups/matchups_index.json', { cache: "no-store" });
+    if (!r.ok) {
+      matchups_index = null;
+      return null;
+    }
+    matchups_index = await r.json();
+    return matchups_index;
+  } catch (e) {
+    matchups_index = null;
+    return null;
+  }
+}
+
+function make_select(id, label_text) {
+  const wrap = document.createElement('div');
+  wrap.style.display = 'grid';
+  wrap.style.gap = '6px';
+
+  const label = document.createElement('div');
+  label.textContent = label_text;
+  label.style.fontSize = '12px';
+  label.style.fontWeight = '700';
+  label.style.color = 'rgba(96,103,112,0.95)';
+
+  const sel = document.createElement('select');
+  sel.id = id;
+  sel.style.border = '1px solid var(--border)';
+  sel.style.borderRadius = '10px';
+  sel.style.padding = '8px 10px';
+  sel.style.fontSize = '13px';
+  sel.style.background = 'white';
+
+  wrap.appendChild(label);
+  wrap.appendChild(sel);
+
+  return { wrap, sel };
+}
+
+function set_select_options(sel, options, placeholder) {
+  sel.innerHTML = '';
+
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = placeholder;
+  sel.appendChild(ph);
+
+  options.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v;
+    o.textContent = v;
+    sel.appendChild(o);
+  });
+}
+
+function run_scripts_in(root) {
+  const scripts = Array.from(root.querySelectorAll('script'));
+  scripts.forEach(old => {
+    const s = document.createElement('script');
+    if (old.type) s.type = old.type;
+    if (old.src) {
+      s.src = old.src;
+    } else {
+      s.text = old.textContent || '';
+    }
+    root.appendChild(s);
+    old.remove();
+  });
+}
+
+function resolve_fragment(idx, year, mode, keys) {
+  let cur = (idx && idx.fragments) ? idx.fragments : null;
+  if (!cur) return null;
+
+  const all = [String(year), String(mode), ...keys.map(k => String(k))];
+
+  for (const k of all) {
+    if (!cur || typeof cur !== 'object') return null;
+    cur = cur[k];
+  }
+
+  return (typeof cur === 'string') ? cur : null;
+}
+
+async function load_matchup_fragment(path) {
+  if (!path) return null;
+
+  const cached = matchups_cache.get(path);
+  if (cached) return cached;
+
+  try {
+    const r = await fetch(path, { cache: "no-store" });
+    if (!r.ok) return null;
+    const html = await r.text();
+    matchups_cache.set(path, html);
+    return html;
+  } catch (e) {
+    return null;
+  }
+}
+
+function init_matchups_page_if_present(content_root) {
+  if (!content_root) return;
+
+  const mode_root = content_root.querySelector('#matchups_mode_root');
+  const form_root = content_root.querySelector('#matchups_form_root');
+  const results_root = content_root.querySelector('#matchups_results_root');
+  if (!mode_root || !form_root || !results_root) return;
+
+  if (form_root.dataset.inited === '1') return;
+  form_root.dataset.inited = '1';
+
+  mode_root.innerHTML = '';
+  form_root.innerHTML = '';
+  results_root.innerHTML = '';
+
+  const mode_select = document.createElement('select');
+  mode_select.style.padding = '8px 10px';
+  mode_select.style.border = '1px solid var(--border)';
+  mode_select.style.borderRadius = '10px';
+
+  const modes = [
+    ['sp_vs_team', 'SP vs Team'],
+    ['sp_vs_2', 'SP vs 2 Teams'],
+    ['rp_inning', 'RP Inning'],
+    ['hitter_vs_pitcher', 'Hitter vs Pitcher'],
+    ['multi_hitter', 'Multiple Hitters']
+  ];
+
+  modes.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m[0];
+    o.textContent = m[1];
+    mode_select.appendChild(o);
+  });
+
+  mode_root.appendChild(mode_select);
+
+  function clear_results() {
+    results_root.innerHTML = '';
+  }
+
+  async function render_fragments(paths) {
+    clear_results();
+    for (const p of paths) {
+      if (!p) continue;
+      const html = await load_matchup_fragment(p);
+      if (!html) continue;
+
+      const block = document.createElement('div');
+      block.style.margin = '12px 0';
+      block.innerHTML = html;
+      results_root.appendChild(block);
+      run_scripts_in(block);
+    }
+  }
+
+  async function build_form() {
+  form_root.innerHTML = '';
+  clear_results();
+
+  const idx = await load_matchups_index();
+  if (!idx) return;
+
+  const years = idx.years || [];
+  const hitters = idx.hitters || [];
+  const pitchers = idx.pitchers || [];
+  const teams = idx.teams || [];
+
+  const mode = mode_select.value;
+
+  function build_select(id, label_text, options, placeholder) {
+    const { wrap, sel } = make_select(id, label_text);
+    set_select_options(sel, options, placeholder);
+    form_root.appendChild(wrap);
+    return sel;
+  }
+
+  function build_side_select(id) {
+    return build_select(id, 'vs/@', ['@', 'vs'], 'Select');
+  }
+
+  const year_sel = build_select('matchups_year', 'Year', years, 'Select year');
+
+  async function render_one(path) {
+    await render_fragments([path]);
+  }
+
+  async function render_many(paths) {
+    await render_fragments(paths.filter(Boolean));
+  }
+
+  if (mode === 'sp_vs_team') {
+    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+    const side_sel = build_side_select('matchups_side');
+    const team_sel = build_select('matchups_team', 'Team', teams, 'Select team');
+
+    async function submit() {
+      const y = year_sel.value;
+      const p = pitcher_sel.value;
+      const s = side_sel.value;
+      const t = team_sel.value;
+      if (!y || !p || !s || !t) return;
+
+      const path = resolve_fragment(idx, y, 'sp_vs_team', [p, s, t]);
+      await render_one(path);
+    }
+
+    [pitcher_sel, side_sel, team_sel, year_sel].forEach(x => x.addEventListener('change', submit));
+    return;
+  }
+
+  if (mode === 'sp_vs_2') {
+    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+
+    const side_sel_0 = build_side_select('matchups_side_0');
+    const team_sel_0 = build_select('matchups_team_0', 'Team (1)', teams, 'Select team');
+
+    const side_sel_1 = build_side_select('matchups_side_1');
+    const team_sel_1 = build_select('matchups_team_1', 'Team (2)', teams, 'Select team');
+
+    async function submit() {
+      const y = year_sel.value;
+      const p = pitcher_sel.value;
+      if (!y || !p) return;
+
+      const paths = [
+        resolve_fragment(idx, y, 'sp_vs_2', [p, side_sel_0.value, team_sel_0.value]),
+        resolve_fragment(idx, y, 'sp_vs_2', [p, side_sel_1.value, team_sel_1.value]),
+      ];
+      await render_many(paths);
+    }
+
+    [pitcher_sel, side_sel_0, team_sel_0, side_sel_1, team_sel_1, year_sel].forEach(x => x.addEventListener('change', submit));
+    return;
+  }
+
+  if (mode === 'hitter_vs_pitcher') {
+    const hitter_sel = build_select('matchups_hitter', 'Hitter', hitters, 'Select hitter');
+    const side_sel = build_side_select('matchups_side');
+    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+
+    async function submit() {
+      const y = year_sel.value;
+      const h = hitter_sel.value;
+      const s = side_sel.value;
+      const p = pitcher_sel.value;
+      if (!y || !h || !s || !p) return;
+
+      const path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h, s, p]);
+      await render_one(path);
+    }
+
+    [hitter_sel, side_sel, pitcher_sel, year_sel].forEach(x => x.addEventListener('change', submit));
+    return;
+  }
+
+  if (mode === 'multi_hitter') {
+    const rows = [];
+
+    for (let i = 0; i < 5; i++) {
+      const { wrap: h_wrap, sel: h_sel } = make_select(`matchups_hitter_${i}`, `Hitter ${i + 1}`);
+      set_select_options(h_sel, hitters, 'Select hitter');
+
+      const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'vs/@');
+      set_select_options(s_sel, ['@', 'vs'], 'Select');
+
+      const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
+      set_select_options(p_sel, pitchers, 'Select pitcher');
+
+      form_root.appendChild(h_wrap);
+      form_root.appendChild(s_wrap);
+      form_root.appendChild(p_wrap);
+
+      rows.push({ h_sel, s_sel, p_sel });
+    }
+
+    async function submit() {
+      const y = year_sel.value;
+      if (!y) return;
+
+      const paths = rows
+        .filter(r => r.h_sel.value && r.s_sel.value && r.p_sel.value)
+        .map(r => resolve_fragment(idx, y, 'hitter_vs_pitcher', [r.h_sel.value, r.s_sel.value, r.p_sel.value]));
+
+      await render_many(paths);
+    }
+
+    rows.forEach(r => [r.h_sel, r.s_sel, r.p_sel].forEach(x => x.addEventListener('change', submit)));
+    year_sel.addEventListener('change', submit);
+    return;
+  }
+
+  if (mode === 'rp_inning') {
+    const { wrap: rp_wrap, sel: rp_sel } = make_select('matchups_rp', 'RP');
+    set_select_options(rp_sel, pitchers, 'Select RP');
+
+    const { wrap: b1_wrap, sel: b1_sel } = make_select('matchups_b1', 'Batter 1');
+    set_select_options(b1_sel, hitters, 'Select batter');
+
+    const { wrap: b2_wrap, sel: b2_sel } = make_select('matchups_b2', 'Batter 2');
+    set_select_options(b2_sel, hitters, 'Select batter');
+
+    const { wrap: b3_wrap, sel: b3_sel } = make_select('matchups_b3', 'Batter 3');
+    set_select_options(b3_sel, hitters, 'Select batter');
+
+    form_root.appendChild(rp_wrap);
+    form_root.appendChild(b1_wrap);
+    form_root.appendChild(b2_wrap);
+    form_root.appendChild(b3_wrap);
+
+    async function submit() {
+      const y = year_sel.value;
+      if (!y || !rp_sel.value || !b1_sel.value || !b2_sel.value || !b3_sel.value) return;
+
+      const path = resolve_fragment(idx, y, 'rp_inning', [rp_sel.value, b1_sel.value, b2_sel.value, b3_sel.value]);
+      await render_one(path);
+    }
+
+    [rp_sel, b1_sel, b2_sel, b3_sel, year_sel].forEach(x => x.addEventListener('change', submit));
+    return;
+  }
+}
+
+  mode_select.addEventListener('change', build_form);
+  build_form();
 }
 
 /* =============================================================================

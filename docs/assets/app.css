@@ -372,6 +372,28 @@ html, body {
 /* =============================================================================
    6) Page content (Home / Key / Player pages)
    ============================================================================= */
+
+.year_select_wrap {
+  display: inline-grid;
+  gap: 4px;
+}
+
+.year_select_label {
+  font-size: 11px;
+  color: rgba(96,103,112,0.95);
+  font-weight: 700;
+}
+
+.year_select {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: rgba(96,103,112,0.95);
+  font-weight: 700;
+}
+
 .player_page {
   max-width: 1200px;
 }
@@ -405,6 +427,41 @@ html, body {
 .static_page ul {
   margin: 8px 0 10px 18px;
   padding: 0;
+}
+
+.player_name_row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.year_buttons {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.year_btn {
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 10px;
+  padding: 5px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: rgba(96,103,112,0.95);
+  font-weight: 700;
+}
+
+.year_btn:hover {
+  background: var(--panel);
+}
+
+.year_btn.active {
+  border-color: rgba(47,111,237,0.45);
+  background: rgba(47,111,237,0.08);
+  color: #1f2d3d;
 }
 
 /* =============================================================================
