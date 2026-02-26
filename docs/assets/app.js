@@ -76,11 +76,16 @@ function render_year_select_in_content(content_root) {
     const sel = document.createElement('select');
     sel.className = 'year_select';
 
+    let any_selected = false;
+
     function add_opt(text, file, is_selected) {
       const o = document.createElement('option');
       o.value = file;
       o.textContent = text;
-      if (is_selected) o.selected = true;
+      if (is_selected) {
+        o.selected = true;
+        any_selected = true;
+      }
       sel.appendChild(o);
     }
 
@@ -100,7 +105,7 @@ function render_year_select_in_content(content_root) {
     });
 
     // If we didn’t match active_file (edge case), default to first option
-    if (!sel.querySelector('option[selected]') && sel.options.length) {
+    if (!any_selected && sel.options.length) {
       sel.selectedIndex = 0;
     }
 
@@ -109,6 +114,8 @@ function render_year_select_in_content(content_root) {
       const file = sel.value;
       if (!file) return;
       load_page(file, active_page_id || (document.querySelector('.toc_link.active')?.dataset.page || ''));
+      // keep hash aligned with "this player's id" so refresh/back works predictably
+      if (active_page_id) history.replaceState(null, '', '#' + encodeURIComponent(active_page_id));
     });
 
     wrap.appendChild(label);
@@ -618,14 +625,17 @@ function run_scripts_in(root) {
 }
 
 function resolve_fragment(idx, year, mode, keys) {
-  let cur = (idx && idx.fragments) ? idx.fragments : null;
+  if (!idx || !idx.modes || !idx.modes[mode]) return null;
+
+  let cur = idx.modes[mode].fragments;
   if (!cur) return null;
 
-  const all = [String(year), String(mode), ...keys.map(k => String(k))];
+  cur = cur[String(year)];
+  if (!cur) return null;
 
-  for (const k of all) {
+  for (const k of keys) {
     if (!cur || typeof cur !== 'object') return null;
-    cur = cur[k];
+    cur = cur[String(k)];
   }
 
   return (typeof cur === 'string') ? cur : null;
@@ -706,6 +716,7 @@ function init_matchups_page_if_present(content_root) {
 
   async function build_form() {
   form_root.innerHTML = '';
+  const prev_year = document.getElementById('matchups_year')?.value || '';
   clear_results();
 
   const idx = await load_matchups_index();
@@ -893,10 +904,15 @@ function init_matchups_page_if_present(content_root) {
   }
 
   const year_sel = build_select('matchups_year', 'Year', years, 'Select year');
-  if (years && years.length) year_sel.value = String(years[0]);
+  if (prev_year && years.includes(Number(prev_year))) {
+    year_sel.value = String(prev_year);
+  } else if (years && years.length) {
+    year_sel.value = String(Math.max(...years));
+  }
+
   year_sel.addEventListener('change', () => {
     refresh_lists_from_year();
-    build_form(); // rebuild the mode form so selects get populated from the new year
+    build_form(); // rebuild with the chosen year preserved
   });
 
   refresh_lists_from_year();
