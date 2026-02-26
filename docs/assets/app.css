@@ -429,18 +429,24 @@ html, body {
   padding: 0;
 }
 
-.player_name_row {
+/* .player_name_row {
   display: flex;
   align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+} */
+
+.player_name_row {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
   flex-wrap: wrap;
 }
 
 .year_buttons {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  width: 100%;
+  margin: 6px 0 0 0;
+  display: block;
 }
 
 .year_btn {
