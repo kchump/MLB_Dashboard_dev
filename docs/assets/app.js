@@ -558,6 +558,7 @@ function make_select(id, label_text) {
 
   const sel = document.createElement('select');
   sel.id = id;
+  sel.dataset.field = String(id || '').replace(/^matchups_/, '');
   sel.style.border = '1px solid var(--border)';
   sel.style.borderRadius = '10px';
   sel.style.padding = '8px 10px';
@@ -900,7 +901,7 @@ function init_matchups_page_if_present(content_root) {
   }
 
   function build_side_select(id) {
-    return build_select(id, 'vs/@', ['@', 'vs'], 'Select');
+    return build_select(id, 'vs./@', ['@', 'vs.'], 'Select');
   }
 
   const year_sel = build_select('matchups_year', 'Year', years, 'Select year');
@@ -1011,8 +1012,8 @@ function init_matchups_page_if_present(content_root) {
       const { wrap: h_wrap, sel: h_sel } = make_select(`matchups_hitter_${i}`, `Hitter ${i + 1}`);
       set_select_options_grouped(h_sel, year_lists.hitters_by_team, 'Select hitter');
 
-      const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'vs/@');
-      set_select_options(s_sel, ['@', 'vs'], 'Select');
+      const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'vs./@');
+      set_select_options(s_sel, ['@', 'vs.'], 'Select');
 
       const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
       set_select_options_grouped(p_sel, year_lists.pitchers_by_team, 'Select pitcher');

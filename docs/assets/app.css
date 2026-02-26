@@ -370,6 +370,38 @@ html, body {
 }
 
 /* =============================================================================
+   Matchups form sizing
+   ============================================================================= */
+
+#matchups #matchups_form_root select {
+  width: auto;
+  max-width: 100%;
+}
+
+/* year should fit 4 digits */
+#matchups #matchups_form_root select[data-field="year"] {
+  width: 6ch;
+}
+
+/* vs./@ should fit 4 chars */
+#matchups #matchups_form_root select[data-field^="side"] {
+  width: 6ch;
+}
+
+/* names: ~40 chars */
+#matchups #matchups_form_root select[data-field^="hitter"],
+#matchups #matchups_form_root select[data-field^="pitcher"] {
+  width: 42ch;
+  max-width: 100%;
+}
+
+/* team can be medium */
+#matchups #matchups_form_root select[data-field^="team"] {
+  width: 18ch;
+  max-width: 100%;
+}
+
+/* =============================================================================
    6) Page content (Home / Key / Player pages)
    ============================================================================= */
 
