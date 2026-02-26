@@ -42,6 +42,7 @@ async function load_year_page_lookup() {
 }
 
 let active_content_file = '';
+let active_page_id = '';
 
 function render_year_select_in_content(content_root) {
   if (!content_root || !year_page_lookup) return;
@@ -107,7 +108,7 @@ function render_year_select_in_content(content_root) {
       e.preventDefault();
       const file = sel.value;
       if (!file) return;
-      load_page(file, (document.querySelector('.toc_link.active')?.dataset.page || ''));
+      load_page(file, active_page_id || (document.querySelector('.toc_link.active')?.dataset.page || ''));
     });
 
     wrap.appendChild(label);
@@ -157,6 +158,7 @@ async function load_page(file, page_id) {
 
   content.innerHTML = html;
   active_content_file = file || '';
+  active_page_id = page_id || active_page_id || '';
 
   // Plotly fragments include inline <script> tags; scripts inserted via innerHTML do not run.
   // Re-create those script tags so the browser executes them.
@@ -569,11 +571,34 @@ function set_select_options(sel, options, placeholder) {
   ph.textContent = placeholder;
   sel.appendChild(ph);
 
-  options.forEach(v => {
+  (options || []).forEach(v => {
     const o = document.createElement('option');
     o.value = v;
     o.textContent = v;
     sel.appendChild(o);
+  });
+}
+
+function set_select_options_grouped(sel, groups, placeholder) {
+  sel.innerHTML = '';
+
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.textContent = placeholder;
+  sel.appendChild(ph);
+
+  (groups || []).forEach(g => {
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+
+    (g.options || []).forEach(v => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      og.appendChild(o);
+    });
+
+    sel.appendChild(og);
   });
 }
 
@@ -624,73 +649,6 @@ async function load_matchup_fragment(path) {
 }
 
 function init_matchups_page_if_present(content_root) {
-  function collect_lists_for_year(idx, year) {
-    const out = { hitters: new Set(), pitchers: new Set(), teams: new Set() };
-    const root = (((idx || {}).fragments || {})[String(year)]) || null;
-    if (!root || typeof root !== 'object') return { hitters: [], pitchers: [], teams: [] };
-
-    function add_teams_from_sp_vs_team(obj) {
-      Object.keys(obj || {}).forEach(p => {
-        out.pitchers.add(p);
-        const sides = obj[p] || {};
-        Object.keys(sides).forEach(s => {
-          const tmap = sides[s] || {};
-          Object.keys(tmap).forEach(t => out.teams.add(t));
-        });
-      });
-    }
-
-    function add_from_hitter_vs_pitcher(obj) {
-      Object.keys(obj || {}).forEach(h => {
-        out.hitters.add(h);
-        const sides = obj[h] || {};
-        Object.keys(sides).forEach(s => {
-          const pmap = sides[s] || {};
-          Object.keys(pmap).forEach(p => out.pitchers.add(p));
-        });
-      });
-    }
-
-    function add_from_sp_vs_2(obj) {
-      Object.keys(obj || {}).forEach(p => {
-        out.pitchers.add(p);
-        const sides = obj[p] || {};
-        Object.keys(sides).forEach(s => {
-          const tmap = sides[s] || {};
-          Object.keys(tmap).forEach(t => out.teams.add(t));
-        });
-      });
-    }
-
-    function add_from_rp_inning(obj) {
-      Object.keys(obj || {}).forEach(rp => {
-        out.pitchers.add(rp);
-        const b1s = obj[rp] || {};
-        Object.keys(b1s).forEach(b1 => {
-          out.hitters.add(b1);
-          const b2s = b1s[b1] || {};
-          Object.keys(b2s).forEach(b2 => {
-            out.hitters.add(b2);
-            const b3s = b2s[b2] || {};
-            Object.keys(b3s).forEach(b3 => {
-              out.hitters.add(b3);
-            });
-          });
-        });
-      });
-    }
-
-    if (root.sp_vs_team) add_teams_from_sp_vs_team(root.sp_vs_team);
-    if (root.hitter_vs_pitcher) add_from_hitter_vs_pitcher(root.hitter_vs_pitcher);
-    if (root.sp_vs_2) add_from_sp_vs_2(root.sp_vs_2);
-    if (root.rp_inning) add_from_rp_inning(root.rp_inning);
-
-    return {
-      hitters: Array.from(out.hitters).sort(),
-      pitchers: Array.from(out.pitchers).sort(),
-      teams: Array.from(out.teams).sort(),
-    };
-  }
   if (!content_root) return;
 
   const mode_root = content_root.querySelector('#matchups_mode_root');
@@ -758,30 +716,167 @@ function init_matchups_page_if_present(content_root) {
   let hitters = [];
   let pitchers = [];
   let teams = [];
+  let year_lists = { hitters_by_team: [], pitchers_by_team: [] };
+
+  function last_name_key(name) {
+    const s = String(name || '').trim();
+    if (!s) return '';
+    const parts = s.split(/\s+/);
+    return parts[parts.length - 1].toLowerCase();
+  }
+
+  function get_year_root(idx_obj, y) {
+    const fr = (idx_obj && idx_obj.fragments) ? idx_obj.fragments : null;
+    if (!fr || typeof fr !== 'object') return null;
+
+    // common: fragments[year][mode]...
+    if (fr[String(y)]) return fr[String(y)];
+
+    // alternate: fragments[mode][year]...
+    const out = {};
+    let any = false;
+    ['sp_vs_team', 'sp_vs_2', 'rp_inning', 'hitter_vs_pitcher'].forEach(m => {
+      if (fr[m] && fr[m][String(y)]) {
+        out[m] = fr[m][String(y)];
+        any = true;
+      }
+    });
+    return any ? out : null;
+  }
 
   function refresh_lists_from_year() {
     const y = year_sel.value;
+
+    // no year selected => nothing appears
     if (!y) {
       hitters = [];
       pitchers = [];
       teams = [];
+      year_lists = { hitters_by_team: [], pitchers_by_team: [] };
       return;
     }
 
-    // Preferred: precomputed lists in the index
-    if (idx.lists && idx.lists[String(y)]) {
-      const lst = idx.lists[String(y)];
-      hitters = (lst.hitters || []).slice().sort();
-      pitchers = (lst.pitchers || []).slice().sort();
-      teams = (lst.teams || []).slice().sort();
+    const root = get_year_root(idx, y);
+    if (!root || typeof root !== 'object') {
+      hitters = [];
+      pitchers = [];
+      teams = [];
+      year_lists = { hitters_by_team: [], pitchers_by_team: [] };
       return;
     }
 
-    // Fallback: derive from fragments tree
-    const lists = collect_lists_for_year(idx, y);
-    hitters = lists.hitters;
-    pitchers = lists.pitchers;
-    teams = lists.teams;
+    const hitters_set = new Set();
+    const pitchers_set = new Set();
+    const teams_set = new Set();
+
+    const hitters_by_team = new Map();   // team -> Set(players)
+    const pitchers_by_team = new Map();  // team -> Set(players)
+
+    function add_player(map_obj, team, player) {
+      const t = String(team || '').trim() || 'Other';
+      const p = String(player || '').trim();
+      if (!p) return;
+      if (!map_obj.has(t)) map_obj.set(t, new Set());
+      map_obj.get(t).add(p);
+    }
+
+    // sp_vs_team: pitcher -> side -> team -> fragment
+    if (root.sp_vs_team && typeof root.sp_vs_team === 'object') {
+      Object.keys(root.sp_vs_team).forEach(p => {
+        pitchers_set.add(p);
+        const sides = root.sp_vs_team[p] || {};
+        Object.keys(sides).forEach(s => {
+          const tmap = sides[s] || {};
+          Object.keys(tmap).forEach(t => {
+            teams_set.add(t);
+            add_player(pitchers_by_team, t, p);
+          });
+        });
+      });
+    }
+
+    // sp_vs_2: pitcher -> side -> team -> fragment
+    if (root.sp_vs_2 && typeof root.sp_vs_2 === 'object') {
+      Object.keys(root.sp_vs_2).forEach(p => {
+        pitchers_set.add(p);
+        const sides = root.sp_vs_2[p] || {};
+        Object.keys(sides).forEach(s => {
+          const tmap = sides[s] || {};
+          Object.keys(tmap).forEach(t => {
+            teams_set.add(t);
+            add_player(pitchers_by_team, t, p);
+          });
+        });
+      });
+    }
+
+    // hitter_vs_pitcher: hitter -> side -> pitcher -> fragment
+    if (root.hitter_vs_pitcher && typeof root.hitter_vs_pitcher === 'object') {
+      Object.keys(root.hitter_vs_pitcher).forEach(h => {
+        hitters_set.add(h);
+        const sides = root.hitter_vs_pitcher[h] || {};
+        Object.keys(sides).forEach(s => {
+          const pmap = sides[s] || {};
+          Object.keys(pmap).forEach(p => {
+            pitchers_set.add(p);
+          });
+        });
+      });
+    }
+
+    // rp_inning: rp -> b1 -> b2 -> b3 -> fragment
+    if (root.rp_inning && typeof root.rp_inning === 'object') {
+      Object.keys(root.rp_inning).forEach(rp => {
+        pitchers_set.add(rp);
+        const b1s = root.rp_inning[rp] || {};
+        Object.keys(b1s).forEach(b1 => {
+          hitters_set.add(b1);
+          const b2s = b1s[b1] || {};
+          Object.keys(b2s).forEach(b2 => {
+            hitters_set.add(b2);
+            const b3s = b2s[b2] || {};
+            Object.keys(b3s).forEach(b3 => {
+              hitters_set.add(b3);
+            });
+          });
+        });
+      });
+    }
+
+    hitters = Array.from(hitters_set).sort((a, b) => {
+      const ka = last_name_key(a);
+      const kb = last_name_key(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return String(a).localeCompare(String(b));
+    });
+
+    pitchers = Array.from(pitchers_set).sort((a, b) => {
+      const ka = last_name_key(a);
+      const kb = last_name_key(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return String(a).localeCompare(String(b));
+    });
+
+    teams = Array.from(teams_set).sort();
+
+    function map_to_groups(map_obj) {
+      const groups = [];
+      Array.from(map_obj.keys()).sort().forEach(t => {
+        const opts = Array.from(map_obj.get(t) || []).sort((a, b) => {
+          const ka = last_name_key(a);
+          const kb = last_name_key(b);
+          if (ka !== kb) return ka < kb ? -1 : 1;
+          return String(a).localeCompare(String(b));
+        });
+        groups.push({ label: t, options: opts });
+      });
+      return groups;
+    }
+
+    year_lists = {
+      hitters_by_team: map_to_groups(hitters_by_team),
+      pitchers_by_team: map_to_groups(pitchers_by_team),
+    };
   }
 
   const mode = mode_select.value;
@@ -798,9 +893,7 @@ function init_matchups_page_if_present(content_root) {
   }
 
   const year_sel = build_select('matchups_year', 'Year', years, 'Select year');
-  if (year_sel.options.length > 1 && !year_sel.value) {
-    year_sel.selectedIndex = 1; // first real year
-  }
+  if (years && years.length) year_sel.value = String(years[0]);
   year_sel.addEventListener('change', () => {
     refresh_lists_from_year();
     build_form(); // rebuild the mode form so selects get populated from the new year
@@ -817,7 +910,9 @@ function init_matchups_page_if_present(content_root) {
   }
 
   if (mode === 'sp_vs_team') {
-    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+    const { wrap: p_wrap, sel: pitcher_sel } = make_select('matchups_pitcher', 'Pitcher');
+    set_select_options_grouped(pitcher_sel, year_lists.pitchers_by_team, 'Select pitcher');
+    form_root.appendChild(p_wrap);
     const side_sel = build_side_select('matchups_side');
     const team_sel = build_select('matchups_team', 'Team', teams, 'Select team');
 
@@ -837,7 +932,9 @@ function init_matchups_page_if_present(content_root) {
   }
 
   if (mode === 'sp_vs_2') {
-    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+    const { wrap: p_wrap, sel: pitcher_sel } = make_select('matchups_pitcher', 'Pitcher');
+    set_select_options_grouped(pitcher_sel, year_lists.pitchers_by_team, 'Select pitcher');
+    form_root.appendChild(p_wrap);
 
     const side_sel_0 = build_side_select('matchups_side_0');
     const team_sel_0 = build_select('matchups_team_0', 'Team (1)', teams, 'Select team');
@@ -862,9 +959,13 @@ function init_matchups_page_if_present(content_root) {
   }
 
   if (mode === 'hitter_vs_pitcher') {
-    const hitter_sel = build_select('matchups_hitter', 'Hitter', hitters, 'Select hitter');
+    const { wrap: h_wrap, sel: hitter_sel } = make_select('matchups_hitter', 'Hitter');
+    set_select_options_grouped(hitter_sel, year_lists.hitters_by_team, 'Select hitter');
+    form_root.appendChild(h_wrap);
     const side_sel = build_side_select('matchups_side');
-    const pitcher_sel = build_select('matchups_pitcher', 'Pitcher', pitchers, 'Select pitcher');
+    const { wrap: p_wrap, sel: pitcher_sel } = make_select('matchups_pitcher', 'Pitcher');
+    set_select_options_grouped(pitcher_sel, year_lists.pitchers_by_team, 'Select pitcher');
+    form_root.appendChild(p_wrap);
 
     async function submit() {
       const y = year_sel.value;
@@ -892,13 +993,13 @@ function init_matchups_page_if_present(content_root) {
       row_div.style.alignItems = 'flex-end';
 
       const { wrap: h_wrap, sel: h_sel } = make_select(`matchups_hitter_${i}`, `Hitter ${i + 1}`);
-      set_select_options(h_sel, hitters, 'Select hitter');
+      set_select_options_grouped(h_sel, year_lists.hitters_by_team, 'Select hitter');
 
       const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'vs/@');
       set_select_options(s_sel, ['@', 'vs'], 'Select');
 
       const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
-      set_select_options(p_sel, pitchers, 'Select pitcher');
+      set_select_options_grouped(p_sel, year_lists.pitchers_by_team, 'Select pitcher');
 
       row_div.appendChild(h_wrap);
       row_div.appendChild(s_wrap);
@@ -929,16 +1030,16 @@ function init_matchups_page_if_present(content_root) {
 
   if (mode === 'rp_inning') {
     const { wrap: rp_wrap, sel: rp_sel } = make_select('matchups_rp', 'RP');
-    set_select_options(rp_sel, pitchers, 'Select RP');
+    set_select_options_grouped(rp_sel, year_lists.pitchers_by_team, 'Select RP');
 
     const { wrap: b1_wrap, sel: b1_sel } = make_select('matchups_b1', 'Batter 1');
-    set_select_options(b1_sel, hitters, 'Select batter');
+    set_select_options_grouped(b1_sel, year_lists.hitters_by_team, 'Select batter');
 
     const { wrap: b2_wrap, sel: b2_sel } = make_select('matchups_b2', 'Batter 2');
-    set_select_options(b2_sel, hitters, 'Select batter');
+    set_select_options_grouped(b2_sel, year_lists.hitters_by_team, 'Select batter');
 
     const { wrap: b3_wrap, sel: b3_sel } = make_select('matchups_b3', 'Batter 3');
-    set_select_options(b3_sel, hitters, 'Select batter');
+    set_select_options_grouped(b3_sel, year_lists.hitters_by_team, 'Select batter');
 
     form_root.appendChild(rp_wrap);
     form_root.appendChild(b1_wrap);
