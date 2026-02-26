@@ -41,14 +41,20 @@ async function load_year_page_lookup() {
   }
 }
 
+let active_content_file = '';
+
 function render_year_select_in_content(content_root) {
   if (!content_root || !year_page_lookup) return;
 
   const year_blocks = Array.from(content_root.querySelectorAll('.year_buttons'));
   if (!year_blocks.length) return;
 
-  const years = Object.keys(year_page_lookup).sort().reverse();
-  const current_year = years.length ? years[0] : '';
+  const years = Object.keys(year_page_lookup)
+    .map(y => String(y))
+    .filter(y => /^\d{4}$/.test(y))
+    .sort((a, b) => Number(b) - Number(a));
+
+  const current_year = years.length ? String(years[0]) : '';
 
   year_blocks.forEach(el => {
     const person_key = (el.getAttribute('data-person_key') || '').trim();
@@ -57,7 +63,7 @@ function render_year_select_in_content(content_root) {
     el.innerHTML = '';
     if (!person_key || !role) return;
 
-    const active_file = (document.querySelector('.toc_link.active')?.dataset.file || '');
+    const active_file = active_content_file || (document.querySelector('.toc_link.active')?.dataset.file || '');
 
     const wrap = document.createElement('div');
     wrap.className = 'year_select_wrap';
@@ -150,6 +156,7 @@ async function load_page(file, page_id) {
   }
 
   content.innerHTML = html;
+  active_content_file = file || '';
 
   // Plotly fragments include inline <script> tags; scripts inserted via innerHTML do not run.
   // Re-create those script tags so the browser executes them.
@@ -761,6 +768,16 @@ function init_matchups_page_if_present(content_root) {
       return;
     }
 
+    // Preferred: precomputed lists in the index
+    if (idx.lists && idx.lists[String(y)]) {
+      const lst = idx.lists[String(y)];
+      hitters = (lst.hitters || []).slice().sort();
+      pitchers = (lst.pitchers || []).slice().sort();
+      teams = (lst.teams || []).slice().sort();
+      return;
+    }
+
+    // Fallback: derive from fragments tree
     const lists = collect_lists_for_year(idx, y);
     hitters = lists.hitters;
     pitchers = lists.pitchers;
@@ -781,6 +798,9 @@ function init_matchups_page_if_present(content_root) {
   }
 
   const year_sel = build_select('matchups_year', 'Year', years, 'Select year');
+  if (year_sel.options.length > 1 && !year_sel.value) {
+    year_sel.selectedIndex = 1; // first real year
+  }
   year_sel.addEventListener('change', () => {
     refresh_lists_from_year();
     build_form(); // rebuild the mode form so selects get populated from the new year
