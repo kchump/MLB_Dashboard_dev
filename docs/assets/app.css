@@ -373,6 +373,18 @@ html, body {
    Matchups form sizing
    ============================================================================= */
 
+#matchups .matchups_submit {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+#matchups .matchups_submit:hover {
+  background: var(--panel);
+}
 #matchups #matchups_form_root select {
   width: auto;
   max-width: 100%;
