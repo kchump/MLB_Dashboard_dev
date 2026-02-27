@@ -1,21 +1,24 @@
 Set-Location $PSScriptRoot
 
-# --- paths ---
-$target_docs = Join-Path $PSScriptRoot 'docs'
+# --- mirror docs incrementally (only changes) ---
 $source_docs = 'C:\Users\kcamp\Downloads\MLB_Dashboard\docs'
+$target_docs = Join-Path $PSScriptRoot 'docs'
 
-# --- ensure target exists ---
 if (!(Test-Path $target_docs)) {
     New-Item -ItemType Directory -Path $target_docs | Out-Null
 }
 
-# --- delete existing contents in target docs ---
-Get-ChildItem $target_docs -Force | Remove-Item -Recurse -Force
+# /MIR mirrors (copy + delete extras)
+# /MT uses multithreading (adjust threads if you want)
+# /R and /W keep retries from stalling forever
+robocopy "$source_docs" "$target_docs" /MIR /MT:16 /R:2 /W:1 /NFL /NDL /NP
 
-# --- copy new contents ---
-Copy-Item -Path (Join-Path $source_docs '*') `
-          -Destination $target_docs `
-          -Recurse -Force
+# robocopy returns "weird" success codes; treat < 8 as success
+if ($LASTEXITCODE -ge 8) { throw "Robocopy failed with exit code $LASTEXITCODE" }
+
+# if nothing changed, skip committing
+git status --porcelain | ForEach-Object { $has_changes = $true; break }
+if (-not $has_changes) { exit 0 }
 
 git add .
 git commit -m "update"
