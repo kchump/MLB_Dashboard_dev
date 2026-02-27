@@ -372,6 +372,53 @@ html, body {
 /* =============================================================================
    Matchups form sizing
    ============================================================================= */
+
+  #matchups .matchup_block {
+  margin: 10px 0 12px 0;
+  padding: 10px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: white;
+}
+
+#matchups .matchup_title {
+  font-weight: 800;
+  font-size: 13px;
+  margin: 0 0 8px 0;
+  color: rgba(40,40,40,0.95);
+}
+
+#matchups .matchup_table_wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+}
+
+#matchups table.matchup_table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  min-width: 720px;
+}
+
+#matchups table.matchup_table th,
+#matchups table.matchup_table td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+#matchups table.matchup_table th {
+  background: var(--panel);
+  font-weight: 800;
+}
+
+#matchups table.matchup_table tbody tr:nth-child(even) td {
+  background: rgba(246,248,252,0.65);
+}
 #matchups #matchups_form_root select.is_placeholder {
   color: rgba(96,103,112,0.75);
 }
@@ -399,12 +446,12 @@ html, body {
 
 /* year should fit 4 digits */
 #matchups #matchups_form_root select[data-field="year"] {
-  width: 6ch;
+  width: 12ch;
 }
 
 /* vs./@ should fit 4 chars */
 #matchups #matchups_form_root select[data-field^="side"] {
-  width: 6ch;
+  width: 12ch;
 }
 
 /* names: ~40 chars */

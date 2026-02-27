@@ -910,16 +910,18 @@ function init_matchups_page_if_present(content_root) {
           pitchers_sp: Array.isArray(pack.pitchers_sp) ? pack.pitchers_sp : [],
         };
 
-        const pack_has_lists =
-          (hitters && hitters.length) ||
-          (pitchers && pitchers.length) ||
-          (teams && teams.length) ||
-          (year_lists.hitters_by_team && year_lists.hitters_by_team.length) ||
-          (year_lists.pitchers_by_team && year_lists.pitchers_by_team.length) ||
-          (year_lists.pitchers_rp_by_team && year_lists.pitchers_rp_by_team.length) ||
-          (year_lists.pitchers_sp_by_team && year_lists.pitchers_sp_by_team.length);
+const pack_has_lists =
+  (hitters && hitters.length) ||
+  (pitchers && pitchers.length) ||
+  (teams && teams.length) ||
+  (year_lists.hitters_by_team && year_lists.hitters_by_team.length) ||
+  (year_lists.pitchers_by_team && year_lists.pitchers_by_team.length) ||
+  (year_lists.pitchers_rp_by_team && year_lists.pitchers_rp_by_team.length) ||
+  (year_lists.pitchers_sp_by_team && year_lists.pitchers_sp_by_team.length) ||
+  (year_lists.pitchers_rp && year_lists.pitchers_rp.length) ||
+  (year_lists.pitchers_sp && year_lists.pitchers_sp.length);
 
-        if (pack_has_lists) return;
+if (pack_has_lists) return;
 
         dbg('pack was present but empty; falling back to fragment-derived lists');
       }
@@ -1104,7 +1106,7 @@ function init_matchups_page_if_present(content_root) {
 
     if (mode === 'sp_vs_team') {
       const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
-      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_by_team, pitchers, 'Select pitcher');
+      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
 
       const side_obj = build_side_select('matchups_side');
 
@@ -1139,7 +1141,7 @@ function init_matchups_page_if_present(content_root) {
 
       function refresh_mode_options() {
         clear_results();
-        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_by_team, pitchers, 'Select pitcher');
+        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
         set_select_options(team_sel, teams, 'Select team');
 
         pitcher_sel.value = '';
@@ -1153,7 +1155,7 @@ function init_matchups_page_if_present(content_root) {
 
     if (mode === 'sp_vs_2') {
       const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
-      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_by_team, pitchers, 'Select pitcher');
+      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
       form_root.appendChild(pitcher_obj.wrap);
 
       const side_0_obj = build_side_select('matchups_side_0');
@@ -1190,7 +1192,7 @@ function init_matchups_page_if_present(content_root) {
 
       function refresh_mode_options() {
         clear_results();
-        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_by_team, pitchers, 'Select pitcher');
+        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
         set_select_options(team_sel_0, teams, 'Select team');
         set_select_options(team_sel_1, teams, 'Select team');
 
