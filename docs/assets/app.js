@@ -875,18 +875,6 @@ function init_matchups_page_if_present(content_root) {
     };
   }
 
-  function refresh_lists_from_year() {
-    const y = year_sel.value;
-
-    // no year selected => nothing appears
-    if (!y) {
-      hitters = [];
-      pitchers = [];
-      teams = [];
-      year_lists = { hitters_by_team: [], pitchers_by_team: [] };
-      return;
-    }
-
     const root = get_year_root(idx, y);
     if (!root || typeof root !== 'object') {
       hitters = [];
@@ -1032,7 +1020,7 @@ function init_matchups_page_if_present(content_root) {
 
   year_sel.addEventListener('change', () => {
     refresh_lists_from_year();
-    build_form(); // rebuild with the chosen year preserved
+    build_form();
   });
 
   refresh_lists_from_year();
