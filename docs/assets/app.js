@@ -737,23 +737,142 @@ function init_matchups_page_if_present(content_root) {
     return parts[parts.length - 1].toLowerCase();
   }
 
-  function get_year_root(idx_obj, y) {
-    const fr = (idx_obj && idx_obj.fragments) ? idx_obj.fragments : null;
+  function get_mode_year_fragments(idx_obj, mode, y) {
+    if (!idx_obj || !idx_obj.modes || !idx_obj.modes[mode]) return null;
+    const fr = idx_obj.modes[mode].fragments;
     if (!fr || typeof fr !== 'object') return null;
+    return fr[String(y)] || null;
+  }
 
-    // common: fragments[year][mode]...
-    if (fr[String(y)]) return fr[String(y)];
+  function refresh_lists_from_year() {
+    const y = year_sel.value;
 
-    // alternate: fragments[mode][year]...
-    const out = {};
-    let any = false;
-    ['sp_vs_team', 'sp_vs_2', 'rp_inning', 'hitter_vs_pitcher'].forEach(m => {
-      if (fr[m] && fr[m][String(y)]) {
-        out[m] = fr[m][String(y)];
-        any = true;
-      }
+    // no year selected => nothing appears
+    if (!y) {
+      hitters = [];
+      pitchers = [];
+      teams = [];
+      year_lists = { hitters_by_team: [], pitchers_by_team: [] };
+      return;
+    }
+
+    const sp_team_root = get_mode_year_fragments(idx, 'sp_vs_team', y);
+    const sp_2_root = get_mode_year_fragments(idx, 'sp_vs_2', y);
+    const hvp_root = get_mode_year_fragments(idx, 'hitter_vs_pitcher', y);
+    const rp_root = get_mode_year_fragments(idx, 'rp_inning', y);
+
+    const hitters_set = new Set();
+    const pitchers_set = new Set();
+    const teams_set = new Set();
+
+    const hitters_by_team = new Map();   // team -> Set(players)
+    const pitchers_by_team = new Map();  // team -> Set(players)
+
+    function add_player(map_obj, team, player) {
+      const t = String(team || '').trim() || 'Other';
+      const p = String(player || '').trim();
+      if (!p) return;
+      if (!map_obj.has(t)) map_obj.set(t, new Set());
+      map_obj.get(t).add(p);
+    }
+
+    // sp_vs_team: pitcher -> side -> team -> fragment
+    if (sp_team_root && typeof sp_team_root === 'object') {
+      Object.keys(sp_team_root).forEach(p => {
+        pitchers_set.add(p);
+        const sides = sp_team_root[p] || {};
+        Object.keys(sides).forEach(s => {
+          const tmap = sides[s] || {};
+          Object.keys(tmap).forEach(t => {
+            teams_set.add(t);
+            add_player(pitchers_by_team, t, p);
+          });
+        });
+      });
+    }
+
+    // sp_vs_2: pitcher -> side -> team -> fragment
+    if (sp_2_root && typeof sp_2_root === 'object') {
+      Object.keys(sp_2_root).forEach(p => {
+        pitchers_set.add(p);
+        const sides = sp_2_root[p] || {};
+        Object.keys(sides).forEach(s => {
+          const tmap = sides[s] || {};
+          Object.keys(tmap).forEach(t => {
+            teams_set.add(t);
+            add_player(pitchers_by_team, t, p);
+          });
+        });
+      });
+    }
+
+    // hitter_vs_pitcher: hitter -> side -> pitcher -> fragment
+    if (hvp_root && typeof hvp_root === 'object') {
+      Object.keys(hvp_root).forEach(h => {
+        hitters_set.add(h);
+        const sides = hvp_root[h] || {};
+        Object.keys(sides).forEach(s => {
+          const pmap = sides[s] || {};
+          Object.keys(pmap).forEach(p => {
+            pitchers_set.add(p);
+          });
+        });
+      });
+    }
+
+    // rp_inning: rp -> b1 -> b2 -> b3 -> fragment
+    if (rp_root && typeof rp_root === 'object') {
+      Object.keys(rp_root).forEach(rp => {
+        pitchers_set.add(rp);
+        const b1s = rp_root[rp] || {};
+        Object.keys(b1s).forEach(b1 => {
+          hitters_set.add(b1);
+          const b2s = b1s[b1] || {};
+          Object.keys(b2s).forEach(b2 => {
+            hitters_set.add(b2);
+            const b3s = b2s[b2] || {};
+            Object.keys(b3s).forEach(b3 => {
+              hitters_set.add(b3);
+            });
+          });
+        });
+      });
+    }
+
+    hitters = Array.from(hitters_set).sort((a, b) => {
+      const ka = last_name_key(a);
+      const kb = last_name_key(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return String(a).localeCompare(String(b));
     });
-    return any ? out : null;
+
+    pitchers = Array.from(pitchers_set).sort((a, b) => {
+      const ka = last_name_key(a);
+      const kb = last_name_key(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return String(a).localeCompare(String(b));
+    });
+
+    teams = Array.from(teams_set).sort();
+
+    function map_to_groups(map_obj) {
+      const groups = [];
+      Array.from(map_obj.keys()).sort().forEach(t => {
+        const opts = Array.from(map_obj.get(t) || []).sort((a, b) => {
+          const ka = last_name_key(a);
+          const kb = last_name_key(b);
+          if (ka !== kb) return ka < kb ? -1 : 1;
+          return String(a).localeCompare(String(b));
+        });
+        groups.push({ label: t, options: opts });
+      });
+      return groups;
+    }
+
+    year_lists = {
+      hitters_by_team: map_to_groups(hitters_by_team),
+      pitchers_by_team: map_to_groups(pitchers_by_team),
+    };
   }
 
   function refresh_lists_from_year() {
