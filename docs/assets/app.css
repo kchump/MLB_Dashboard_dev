@@ -412,8 +412,9 @@ html, body {
 #matchups table.matchup_table td {
   border: 1px solid var(--border);
   padding: 8px 10px;
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 #matchups table.matchup_table th {
@@ -424,10 +425,7 @@ html, body {
 #matchups table.matchup_table tbody tr:nth-child(even) td {
   background: rgba(246,248,252,0.65);
 }
-#matchups #matchups_form_root select.is_placeholder {
-  color: rgba(96,103,112,0.75);
-}
-#matchups #matchups_form_root select:not(.is_placeholder) {
+#matchups #matchups_form_root select {
   color: #1c1c1c;
 }
 

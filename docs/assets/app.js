@@ -587,6 +587,9 @@ function make_select(id, label_text) {
 
   const label = document.createElement('div');
   label.textContent = label_text;
+  if (String(label_text || '').trim() === '@/vs.') {
+    label.style.textAlign = 'center';
+  }
   label.style.fontSize = '12px';
   label.style.fontWeight = '700';
   label.style.color = 'rgba(96,103,112,0.95)';
@@ -895,7 +898,6 @@ r.forEach((cell, j) => {
     if (Number.isFinite(v)) {
       td.style.background = rgba_from_two_sided_value(v, -100, -10, 10, 100);
       td.style.color = 'rgba(20,20,20,0.95)';
-      td.style.fontWeight = '700';
     }
   }
 
@@ -1011,18 +1013,62 @@ r.forEach((cell, j) => {
           pitchers_sp: Array.isArray(pack.pitchers_sp) ? pack.pitchers_sp : [],
         };
 
-const pack_has_lists =
-  (hitters && hitters.length) ||
-  (pitchers && pitchers.length) ||
-  (teams && teams.length) ||
-  (year_lists.hitters_by_team && year_lists.hitters_by_team.length) ||
-  (year_lists.pitchers_by_team && year_lists.pitchers_by_team.length) ||
-  (year_lists.pitchers_rp_by_team && year_lists.pitchers_rp_by_team.length) ||
-  (year_lists.pitchers_sp_by_team && year_lists.pitchers_sp_by_team.length) ||
-  (year_lists.pitchers_rp && year_lists.pitchers_rp.length) ||
-  (year_lists.pitchers_sp && year_lists.pitchers_sp.length);
+function has_any(x) {
+  return Array.isArray(x) && x.length;
+}
 
-if (pack_has_lists) return;
+function finalize_year_lists_from_pack_or_partial() {
+  // Ensure these always exist so the mode builders never see undefined.
+  year_lists.hitters_by_team = Array.isArray(year_lists.hitters_by_team) ? year_lists.hitters_by_team : [];
+  year_lists.pitchers_by_team = Array.isArray(year_lists.pitchers_by_team) ? year_lists.pitchers_by_team : [];
+
+  year_lists.pitchers_sp_by_team = Array.isArray(year_lists.pitchers_sp_by_team) ? year_lists.pitchers_sp_by_team : [];
+  year_lists.pitchers_rp_by_team = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
+
+  year_lists.pitchers_sp = Array.isArray(year_lists.pitchers_sp) ? year_lists.pitchers_sp : [];
+  year_lists.pitchers_rp = Array.isArray(year_lists.pitchers_rp) ? year_lists.pitchers_rp : [];
+
+  year_lists.hitter_team_map =
+    (year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object') ? year_lists.hitter_team_map : {};
+
+  // If pack didn't provide SP/RP breakdown, still populate both from the general pitcher lists.
+  // (This is the “same way SP does” behavior: the UI has lists to show.)
+  if (!has_any(year_lists.pitchers_sp_by_team) && has_any(year_lists.pitchers_by_team)) {
+    year_lists.pitchers_sp_by_team = year_lists.pitchers_by_team;
+  }
+  if (!has_any(year_lists.pitchers_rp_by_team) && has_any(year_lists.pitchers_by_team)) {
+    year_lists.pitchers_rp_by_team = year_lists.pitchers_by_team;
+  }
+
+  if (!has_any(year_lists.pitchers_sp) && has_any(pitchers)) {
+    year_lists.pitchers_sp = pitchers;
+  }
+  if (!has_any(year_lists.pitchers_rp) && has_any(pitchers)) {
+    year_lists.pitchers_rp = pitchers;
+  }
+
+  // If hitters list is missing, but we have a hitters_by_team list, derive hitters flat from it.
+  if (!has_any(hitters) && has_any(year_lists.hitters_by_team)) {
+    const s = new Set();
+    year_lists.hitters_by_team.forEach(g => (g.options || []).forEach(n => s.add(n)));
+    hitters = Array.from(s);
+  }
+}
+
+// If pack exists, keep it, but DO NOT early-return just because "some list" exists.
+// Instead, normalize missing lists and then decide if we still need fragment-derived build.
+finalize_year_lists_from_pack_or_partial();
+
+const needs_hitters = !has_any(hitters) && !has_any(year_lists.hitters_by_team);
+const needs_pitchers = !has_any(pitchers) && !has_any(year_lists.pitchers_by_team);
+const needs_teams = !has_any(teams);
+
+// If the pack gave us what we need, we're done.
+if (!needs_hitters && !needs_pitchers && !needs_teams) {
+  return;
+}
+
+// Otherwise we continue into fragment-derived build below (your existing fallback section).
 
         dbg('pack was present but empty; falling back to fragment-derived lists');
       }
@@ -1126,10 +1172,22 @@ if (pack_has_lists) return;
         return groups;
       }
 
-      year_lists = {
-        hitters_by_team: map_to_groups(hitters_by_team),
-        pitchers_by_team: map_to_groups(pitchers_by_team),
-      };
+const hb = map_to_groups(hitters_by_team);
+const pb = map_to_groups(pitchers_by_team);
+
+year_lists = {
+  hitters_by_team: hb,
+  pitchers_by_team: pb,
+
+  // If you don't have true SP/RP classification from fragments, populate both lists
+  // so both SP and RP modes have working dropdowns.
+  pitchers_sp_by_team: pb,
+  pitchers_rp_by_team: pb,
+  pitchers_sp: pitchers,
+  pitchers_rp: pitchers,
+
+  hitter_team_map: year_lists.hitter_team_map || {},
+};
     }
 
     const mode = mode_select.value;
@@ -1486,21 +1544,30 @@ function apply_same_team_filter() {
     : {};
 
   const b1 = String(b1_sel.value || '').trim();
-  const b2 = String(b2_sel.value || '').trim();
+  const prev_b2 = String(b2_sel.value || '').trim();
+  const prev_b3 = String(b3_sel.value || '').trim();
 
-  // If we don't have a chosen B1 (or no map), just give full hitter list
-  // (and still enforce "no duplicates" progressively).
   const team = b1 ? (map_obj[b1] || '') : '';
   const base_allowed = team ? hitters_for_team(team) : hitters;
 
   const allowed_b2 = base_allowed.filter(x => x !== b1);
-  const allowed_b3 = base_allowed.filter(x => x !== b1 && x !== b2);
+  const allowed_b3 = base_allowed.filter(x => x !== b1 && x !== prev_b2);
 
   set_grouped_or_flat(b2_sel, [], allowed_b2, 'Select batter');
   set_grouped_or_flat(b3_sel, [], allowed_b3, 'Select batter');
 
-  if (b2_sel.value && !allowed_b2.includes(b2_sel.value)) b2_sel.value = '';
-  if (b3_sel.value && !allowed_b3.includes(b3_sel.value)) b3_sel.value = '';
+  if (prev_b2 && allowed_b2.includes(prev_b2)) b2_sel.value = prev_b2;
+  else b2_sel.value = '';
+
+  const b2_now = String(b2_sel.value || '').trim();
+  const allowed_b3_final = base_allowed.filter(x => x !== b1 && x !== b2_now);
+  set_grouped_or_flat(b3_sel, [], allowed_b3_final, 'Select batter');
+
+  if (prev_b3 && allowed_b3_final.includes(prev_b3)) b3_sel.value = prev_b3;
+  else b3_sel.value = '';
+
+  sync_select_placeholder_class(b2_sel);
+  sync_select_placeholder_class(b3_sel);
 }
 
       b1_sel.addEventListener('change', () => {
