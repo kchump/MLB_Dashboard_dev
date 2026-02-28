@@ -666,6 +666,92 @@ function set_select_options_grouped(sel, groups, placeholder) {
   sel.addEventListener('change', () => sync_select_placeholder_class(sel));
 }
 
+function build_sidebar_lists() {
+  const out = {
+    hitters_by_team: [],
+    pitchers_sp_by_team: [],
+    pitchers_rp_by_team: [],
+    hitters: [],
+    pitchers_sp: [],
+    pitchers_rp: [],
+    hitter_team_map: {},
+  };
+
+  const team_blocks = Array.from(document.querySelectorAll('.team_block'));
+  if (!team_blocks.length) return out;
+
+  function last_name_key(name) {
+    const s = String(name || '').trim();
+    if (!s) return '';
+    const parts = s.split(/\s+/);
+    return parts[parts.length - 1].toLowerCase();
+  }
+
+  function sort_names(arr) {
+    return arr.sort((a, b) => {
+      const ka = last_name_key(a);
+      const kb = last_name_key(b);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return String(a).localeCompare(String(b));
+    });
+  }
+
+  function group_from_role_list(tb, role) {
+    const team = String(tb.dataset.team || '').trim();
+    if (!team) return null;
+
+    const rl = tb.querySelector(`.role_list[data-role="${role}"]`);
+    if (!rl) return { label: team, options: [] };
+
+    const names = Array.from(rl.querySelectorAll('.toc_link'))
+      .map(a => String(a.textContent || '').trim())
+      .filter(Boolean);
+
+    return { label: team, options: sort_names(names) };
+  }
+
+  const hitters = [];
+  const sp = [];
+  const rp = [];
+
+  team_blocks.forEach(tb => {
+    const team = String(tb.dataset.team || '').trim();
+    if (!team) return;
+
+    const h_g = group_from_role_list(tb, 'batters');
+    const sp_g = group_from_role_list(tb, 'starters');
+    const rp_g = group_from_role_list(tb, 'relievers');
+
+    if (h_g && h_g.options.length) {
+      out.hitters_by_team.push({ label: team, options: h_g.options });
+      h_g.options.forEach(n => {
+        hitters.push(n);
+        out.hitter_team_map[n] = team;
+      });
+    }
+
+    if (sp_g && sp_g.options.length) {
+      out.pitchers_sp_by_team.push({ label: `${team} — Starters`, options: sp_g.options });
+      sp_g.options.forEach(n => sp.push(n));
+    }
+
+    if (rp_g && rp_g.options.length) {
+      out.pitchers_rp_by_team.push({ label: `${team} — Relievers`, options: rp_g.options });
+      rp_g.options.forEach(n => rp.push(n));
+    }
+  });
+
+  out.hitters = Array.from(new Set(hitters));
+  out.pitchers_sp = Array.from(new Set(sp));
+  out.pitchers_rp = Array.from(new Set(rp));
+
+  sort_names(out.hitters);
+  sort_names(out.pitchers_sp);
+  sort_names(out.pitchers_rp);
+
+  return out;
+}
+
 function build_pitcher_groups(year_lists) {
   const sp = Array.isArray(year_lists.pitchers_sp_by_team) ? year_lists.pitchers_sp_by_team : [];
   const rp = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
@@ -1054,6 +1140,34 @@ function finalize_year_lists_from_pack_or_partial() {
 // If pack exists, keep it, but DO NOT early-return just because "some list" exists.
 // Instead, normalize missing lists and then decide if we still need fragment-derived build.
 finalize_year_lists_from_pack_or_partial();
+
+// If this is the "Current" year, prefer sidebar truth for teams + SP/RP roles.
+// This keeps matchups dropdowns aligned with the dashboard roster logic.
+if (String(year_val) === String(preferred_year)) {
+  const sb = build_sidebar_lists();
+
+  if (Array.isArray(sb.hitters_by_team) && sb.hitters_by_team.length) {
+    hitters = sb.hitters;
+    year_lists.hitters_by_team = sb.hitters_by_team;
+    year_lists.hitter_team_map = sb.hitter_team_map;
+  }
+
+  if (Array.isArray(sb.pitchers_sp_by_team) && sb.pitchers_sp_by_team.length) {
+    year_lists.pitchers_sp_by_team = sb.pitchers_sp_by_team;
+    year_lists.pitchers_sp = sb.pitchers_sp;
+  }
+
+  if (Array.isArray(sb.pitchers_rp_by_team) && sb.pitchers_rp_by_team.length) {
+    year_lists.pitchers_rp_by_team = sb.pitchers_rp_by_team;
+    year_lists.pitchers_rp = sb.pitchers_rp;
+  }
+
+  // keep combined pitcher list coherent for hitter_vs_pitcher + other modes
+  const all_p = []
+    .concat(year_lists.pitchers_sp || [])
+    .concat(year_lists.pitchers_rp || []);
+  pitchers = Array.from(new Set(all_p)).sort((a, b) => a.localeCompare(b));
+}
 
 const needs_hitters = !has_any(hitters) && !has_any(year_lists.hitters_by_team);
 const needs_pitchers = !has_any(pitchers) && !has_any(year_lists.pitchers_by_team);
