@@ -587,9 +587,6 @@ function make_select(id, label_text) {
 
   const label = document.createElement('div');
   label.textContent = label_text;
-  if (String(label_text || '').trim() === '@/vs.') {
-    label.style.textAlign = 'center';
-  }
   label.style.fontSize = '12px';
   label.style.fontWeight = '700';
   label.style.color = 'rgba(96,103,112,0.95)';
@@ -787,7 +784,6 @@ function clamp(x, lo, hi) {
 }
 
 function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best) {
-  // worst=-100, neutral_lo=-10, neutral_hi=10, best=100
   const val = Number(v);
   if (!Number.isFinite(val)) return '';
 
@@ -795,11 +791,12 @@ function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best) {
   const hi = Math.max(worst, best);
   const vv = clamp(val, lo, hi);
 
-  // neutral band -> grey
   const nlo = Math.min(neutral_lo, neutral_hi);
   const nhi = Math.max(neutral_lo, neutral_hi);
+
+  // neutral band -> NO FILL (no grey)
   if (vv >= nlo && vv <= nhi) {
-    return 'rgba(160,160,160,0.30)';
+    return '';
   }
 
   // map to [0..1] where 0=worst (blue), 1=best (red)
@@ -814,7 +811,6 @@ function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best) {
   const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
   const a = alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow);
 
-  // red if > midpoint, blue if < midpoint
   if (f > 0.5) return `rgba(210,35,35,${a.toFixed(3)})`;
   return `rgba(35,85,210,${a.toFixed(3)})`;
 }
