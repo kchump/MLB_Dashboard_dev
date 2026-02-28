@@ -388,6 +388,11 @@ html, body {
   color: rgba(40,40,40,0.95);
 }
 
+.matchup_table td.cell_dash {
+  color: rgba(60,60,60,0.55);
+  text-align: center;
+}
+
 #matchups .matchup_table_wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
