@@ -920,78 +920,108 @@ function is_matchup_stat_col(header_text) {
     return { header_cells, row_cells };
   }
 
-  async function render_fragments(paths) {
-    clear_results();
+async function render_fragments(paths, opts) {
+  clear_results();
 
-    const rows = [];
-    let header = null;
+  const options = opts && typeof opts === 'object' ? opts : {};
+  const invert_stats = !!options.invert_stats;
 
-    for (const p of (paths || [])) {
-      if (!p) continue;
+  const rows = [];
+  let header = null;
 
-      const html = await load_matchup_fragment(p);
-      if (!html) continue;
+  for (const p of (paths || [])) {
+    if (!p) continue;
 
-      const parts = extract_table_parts(html);
-      if (!parts) continue;
+    const html = await load_matchup_fragment(p);
+    if (!html) continue;
 
-      if (!header && parts.header_cells.length) header = parts.header_cells;
-      if (parts.row_cells.length) rows.push(parts.row_cells);
-    }
+    const parts = extract_table_parts(html);
+    if (!parts) continue;
 
-    if (!header || !rows.length) return;
+    if (!header && parts.header_cells.length) header = parts.header_cells;
+    if (parts.row_cells.length) rows.push(parts.row_cells);
+  }
 
-    const wrap = document.createElement('div');
-    wrap.className = 'matchup_table_wrap';
+  if (!header || !rows.length) return;
 
-    const table = document.createElement('table');
-    table.className = 'matchup_table';
+  function decimals_in_raw(raw) {
+    const s = String(raw || '').trim();
+    const m = s.match(/-?(?:\d+)(?:\.(\d+))?/);
+    if (!m) return null;
+    return m[1] ? m[1].length : 0;
+  }
 
-    const thead = document.createElement('thead');
-    const trh = document.createElement('tr');
-    header.forEach(h => {
-      const th = document.createElement('th');
-      th.textContent = h;
-      trh.appendChild(th);
+  function format_like_raw(raw, val) {
+    const d = decimals_in_raw(raw);
+    if (d === null) return String(val);
+    if (!Number.isFinite(val)) return String(raw || '').trim();
+    if (d === 0) return String(Math.round(val));
+    return val.toFixed(d);
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'matchup_table_wrap';
+
+  const table = document.createElement('table');
+  table.className = 'matchup_table';
+
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  header.forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+
+    r.forEach((cell, j) => {
+      const td = document.createElement('td');
+
+      const raw = String(cell || '').trim();
+      if (!raw) {
+        td.textContent = '—';
+        td.classList.add('cell_dash');
+        tr.appendChild(td);
+        return;
+      }
+
+      const h = (header && header[j]) ? header[j] : '';
+
+      // default text
+      td.textContent = raw;
+
+      // gradient for "+..." columns
+      if (is_matchup_stat_col(h)) {
+        const v0 = parse_matchup_stat_number(raw);
+        if (Number.isFinite(v0)) {
+          const v = invert_stats ? -v0 : v0;
+
+          // invert displayed score too (only when requested)
+          if (invert_stats) {
+            const txt = format_like_raw(raw, v);
+            td.textContent = (v > 0 ? `+${txt}` : String(txt));
+          }
+
+          td.style.background = rgba_from_two_sided_value(v, -100, -10, 10, 100);
+          td.style.color = 'rgba(20,20,20,0.95)';
+        }
+      }
+
+      tr.appendChild(td);
     });
-    thead.appendChild(trh);
-    table.appendChild(thead);
 
-    const tbody = document.createElement('tbody');
-    rows.forEach(r => {
-      const tr = document.createElement('tr');
-r.forEach((cell, j) => {
-  const td = document.createElement('td');
+    tbody.appendChild(tr);
+  });
 
-  const raw = String(cell || '').trim();
-  if (!raw) {
-    td.textContent = '—';
-    td.classList.add('cell_dash');
-    tr.appendChild(td);
-    return;
-  }
-
-  td.textContent = raw;
-
-  // gradient for "+..." columns
-  const h = (header && header[j]) ? header[j] : '';
-  if (is_matchup_stat_col(h)) {
-    const v = parse_matchup_stat_number(raw);
-    if (Number.isFinite(v)) {
-      td.style.background = rgba_from_two_sided_value(v, -100, -10, 10, 100);
-      td.style.color = 'rgba(20,20,20,0.95)';
-    }
-  }
-
-  tr.appendChild(td);
-});
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-
-    wrap.appendChild(table);
-    results_root.appendChild(wrap);
-  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  results_root.appendChild(wrap);
+}
 
   async function build_form() {
     form_root.innerHTML = '';
@@ -1118,15 +1148,9 @@ function finalize_year_lists_from_pack_or_partial() {
   if (!has_any(year_lists.pitchers_sp_by_team) && has_any(year_lists.pitchers_by_team)) {
     year_lists.pitchers_sp_by_team = year_lists.pitchers_by_team;
   }
-  if (!has_any(year_lists.pitchers_rp_by_team) && has_any(year_lists.pitchers_by_team)) {
-    year_lists.pitchers_rp_by_team = year_lists.pitchers_by_team;
-  }
 
   if (!has_any(year_lists.pitchers_sp) && has_any(pitchers)) {
     year_lists.pitchers_sp = pitchers;
-  }
-  if (!has_any(year_lists.pitchers_rp) && has_any(pitchers)) {
-    year_lists.pitchers_rp = pitchers;
   }
 
   // If hitters list is missing, but we have a hitters_by_team list, derive hitters flat from it.
@@ -1365,13 +1389,13 @@ year_lists = {
 
     refresh_lists_from_year(year_sel.value);
 
-    async function render_one(path) {
-      await render_fragments([path]);
-    }
+async function render_one(path, opts) {
+  await render_fragments([path], opts);
+}
 
-    async function render_many(paths) {
-      await render_fragments(paths.filter(Boolean));
-    }
+async function render_many(paths, opts) {
+  await render_fragments(paths.filter(Boolean), opts);
+}
 
     if (mode === 'sp_vs_team') {
       const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
@@ -1604,7 +1628,7 @@ if (mode === 'multi_hitter') {
         return resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, r.s_sel.value, p_key]);
       });
 
-    await render_many(paths);
+    await render_many(paths, { invert_stats: true });
   }
 
   const submit_btn = build_submit_button('Submit');
