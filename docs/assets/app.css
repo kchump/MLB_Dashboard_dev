@@ -473,7 +473,35 @@ html, body {
 /* =============================================================================
    6) Page content (Home / Key / Player pages)
    ============================================================================= */
+.key_gradient_block {
+  max-width: 520px;
+  margin: 14px 0;
+}
 
+.key_gradient_label_row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(96,103,112,0.95);
+  margin-bottom: 6px;
+}
+
+.key_gradient_bar {
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+
+  /* blue -> grey -> red */
+  background: linear-gradient(
+    90deg,
+    rgba(35,85,210,0.90) 0%,
+    rgba(35,85,210,0.45) 25%,
+    rgba(160,160,160,0.35) 50%,
+    rgba(210,35,35,0.45) 75%,
+    rgba(210,35,35,0.90) 100%
+  );
+}
 .year_select_wrap {
   display: inline-grid;
   gap: 4px;
