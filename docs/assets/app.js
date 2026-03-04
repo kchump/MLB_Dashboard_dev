@@ -1,22 +1,24 @@
 /* =============================================================================
    MLB Dashboard JS (assets/app.js)
-   - Sections:
-     1) Caching + localStorage helpers
-     2) Page loading + activation
-     3) Team role tabs
-     4) Search mode behavior
-     5) Search + filters
-     6) Collapse/expand persistence
-     7) Mobile scaling
-     8) DOMContentLoaded init wiring
+   - Sections (by functional proximity):
+     A) Global state + small utils
+     B) Year lookup + in-content year selector
+     C) Sidebar collapse persistence (keys + read/write)
+     D) Content/page loading + activation (TOC + hash)
+     E) Sidebar team role tabs
+     F) Search + filters (including search-mode open/restore)
+     G) Mobile scaling for Plotly-heavy pages
+     H) Matchups page (index/lists, UI builders, fragment rendering, form modes)
+     I) DOMContentLoaded wiring (events + initial state)
    ============================================================================= */
 
-/* =============================================================================
-   1) Caching + localStorage helpers
-   ============================================================================= */
+/*#################################################################### A) Global state + small utils ####################################################################*/
 const page_cache = new Map();
 
 let year_page_lookup = null;
+
+let active_content_file = '';
+let active_page_id = '';
 
 function safe_page_filename(s) {
   const raw = String(s || '').trim();
@@ -24,6 +26,19 @@ function safe_page_filename(s) {
   return out || 'page';
 }
 
+function is_visible(el) {
+  if (!el) return false;
+  return (el.style.display !== 'none');
+}
+
+function ui_name(s) {
+  if (s == null) return '';
+  const t = String(s).replace(/_/g, ' ').trim();
+  if (t === 'vs') return 'Home';
+  return t;
+}
+
+/*#################################################################### B) Year lookup + in-content year selector ####################################################################*/
 async function load_year_page_lookup() {
   if (year_page_lookup !== null) return year_page_lookup;
 
@@ -41,9 +56,6 @@ async function load_year_page_lookup() {
   }
 }
 
-let active_content_file = '';
-let active_page_id = '';
-
 function render_year_select_in_content(content_root) {
   if (!content_root || !year_page_lookup) return;
 
@@ -55,7 +67,8 @@ function render_year_select_in_content(content_root) {
     .filter(y => /^\d{4}$/.test(y))
     .sort((a, b) => Number(b) - Number(a));
 
-  const current_year = years.length ? String(years[0]) : '';
+    const default_year = years.length ? String(years[0]) : '';
+  const label_current_year = String(window.DEFAULT_SEASON_YEAR || '').trim();
 
   year_blocks.forEach(el => {
     const person_key = (el.getAttribute('data-person_key') || '').trim();
@@ -89,22 +102,18 @@ function render_year_select_in_content(content_root) {
       sel.appendChild(o);
     }
 
-    // Build options:
-    // - Current year appears as "Current" and points to the current-year page file.
-    // - Historical years appear as their numeric year.
     years.forEach(y => {
       const role_map = (year_page_lookup[y] || {})[role] || {};
       const file = role_map[person_key];
       if (!file) return;
 
-      const is_current = (String(y) === String(current_year));
+            const is_current = label_current_year && (String(y) === String(label_current_year));
       const label_text = is_current ? 'Current' : String(y);
       const is_selected = (file === active_file);
 
       add_opt(label_text, file, is_selected);
     });
 
-    // If we didn’t match active_file (edge case), default to first option
     if (!any_selected && sel.options.length) {
       sel.selectedIndex = 0;
     }
@@ -114,7 +123,6 @@ function render_year_select_in_content(content_root) {
       const file = sel.value;
       if (!file) return;
       load_page(file, active_page_id || (document.querySelector('.toc_link.active')?.dataset.page || ''));
-      // keep hash aligned with "this player's id" so refresh/back works predictably
       if (active_page_id) history.replaceState(null, '', '#' + encodeURIComponent(active_page_id));
     });
 
@@ -124,6 +132,7 @@ function render_year_select_in_content(content_root) {
   });
 }
 
+/*#################################################################### C) Sidebar collapse persistence (keys + read/write) ####################################################################*/
 function team_storage_key(team) {
   return 'mlb_dash_team_open__' + team;
 }
@@ -147,9 +156,43 @@ function write_collapsed(key, collapsed) {
   } catch (e) {}
 }
 
-/* =============================================================================
-   2) Page loading + activation
-   ============================================================================= */
+function set_division_collapsed(div_id, collapsed) {
+  const blocks = Array.from(document.querySelectorAll('.division_block'));
+  const btns = Array.from(document.querySelectorAll('.division_title'));
+
+  const block = blocks.find(b => (b.dataset.division || '') === div_id);
+  const btn = btns.find(b => (b.dataset.division || '') === div_id);
+  if (!block || !btn) return;
+
+  write_collapsed(division_storage_key(div_id), collapsed);
+  block.classList.toggle('collapsed', collapsed);
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+}
+
+function set_team_collapsed(team, collapsed) {
+  let block = null;
+  let btn = null;
+
+  document.querySelectorAll('.team_block').forEach(b => {
+    if (b.dataset.team === team) block = b;
+  });
+
+  document.querySelectorAll('.team_title').forEach(b => {
+    if (b.dataset.team === team) btn = b;
+  });
+
+  if (!block || !btn) return;
+
+  write_collapsed(team_storage_key(team), collapsed);
+  block.classList.toggle('collapsed', collapsed);
+  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+
+  if (!collapsed && document.body.dataset.is_searching !== '1') {
+    set_team_role_tab(team, 'batters');
+  }
+}
+
+/*#################################################################### D) Content/page loading + activation (TOC + hash) ####################################################################*/
 async function load_page(file, page_id) {
   const content = document.getElementById('content_root');
   if (!content) return;
@@ -167,8 +210,6 @@ async function load_page(file, page_id) {
   active_content_file = file || '';
   active_page_id = page_id || active_page_id || '';
 
-  // Plotly fragments include inline <script> tags; scripts inserted via innerHTML do not run.
-  // Re-create those script tags so the browser executes them.
   const scripts = Array.from(content.querySelectorAll('script'));
   scripts.forEach(old => {
     const s = document.createElement('script');
@@ -182,20 +223,17 @@ async function load_page(file, page_id) {
     old.remove();
   });
 
-  // Sidebar active highlight
   const links = document.querySelectorAll('.toc_link');
   links.forEach(a => a.classList.toggle('active', a.dataset.page === page_id));
 
   try { localStorage.setItem('mlb_dash_active_page', page_id); } catch (e) {}
 
-  // Year buttons (current player page -> historical page links)
   await load_year_page_lookup();
   render_year_select_in_content(content);
+  install_plotly_tick_popovers(content);
 
-  // If this is a matchups/static meta page, wire its JS here too (see section 3D)
   init_matchups_page_if_present(content);
 
-  // Warm a couple pages ahead (best-effort)
   const active = document.querySelector(`.toc_link[data-page="${page_id}"]`);
   if (active) {
     const lis = Array.from(active.closest('.player_list')?.querySelectorAll('.toc_link') || []);
@@ -222,7 +260,6 @@ function activate_page(page_id) {
 
   load_page(file, page_id);
 
-  // update hash without hard jump
   history.replaceState(null, '', '#' + encodeURIComponent(page_id));
 }
 
@@ -244,9 +281,7 @@ function on_hash_change() {
   activate_page(pid);
 }
 
-/* =============================================================================
-   3) Team role tabs
-   ============================================================================= */
+/*#################################################################### E) Sidebar team role tabs ####################################################################*/
 function set_team_role_tab(team, role) {
   document.querySelectorAll('.role_tab').forEach(btn => {
     if (btn.dataset.team === team) {
@@ -264,11 +299,8 @@ function set_team_role_tab(team, role) {
   apply_search_and_filters((search && search.value) ? search.value : '');
 }
 
-/* =============================================================================
-   4) Search mode behavior (force open while searching, restore after)
-   ============================================================================= */
+/*#################################################################### F) Search + filters (including search-mode open/restore) ####################################################################*/
 function set_search_mode(is_searching) {
-  // divisions
   document.querySelectorAll('.division_block').forEach(db => {
     const div_id = db.dataset.division || '';
     const btn = Array.from(document.querySelectorAll('.division_title')).find(b => (b.dataset.division || '') === div_id);
@@ -294,7 +326,6 @@ function set_search_mode(is_searching) {
     }
   });
 
-  // teams
   document.querySelectorAll('.team_block').forEach(tb => {
     const team = tb.dataset.team || '';
     const btn = Array.from(document.querySelectorAll('.team_title')).find(b => (b.dataset.team || '') === team);
@@ -320,12 +351,10 @@ function set_search_mode(is_searching) {
     }
   });
 
-  // hide tabs during search
   document.querySelectorAll('.role_tabs').forEach(tabs => {
     tabs.style.display = is_searching ? 'none' : '';
   });
 
-  // role lists
   document.querySelectorAll('.role_list').forEach(list => {
     if (is_searching) {
       list.style.display = '';
@@ -339,19 +368,6 @@ function set_search_mode(is_searching) {
   });
 }
 
-/* =============================================================================
-   5) Search + filters
-   ============================================================================= */
-function is_visible(el) {
-  if (!el) return false;
-  return (el.style.display !== 'none');
-}
-function ui_name(s) {
-  if (s == null) return '';
-  const t = String(s).replace(/_/g, ' ').trim();
-  if (t === 'vs') return 'vs.';
-  return t;
-}
 function cleanup_role_list(role_list) {
   if (!role_list) return;
 
@@ -461,48 +477,7 @@ function apply_search_and_filters(q) {
   });
 }
 
-/* =============================================================================
-   6) Collapse/expand persistence
-   ============================================================================= */
-function set_division_collapsed(div_id, collapsed) {
-  const blocks = Array.from(document.querySelectorAll('.division_block'));
-  const btns = Array.from(document.querySelectorAll('.division_title'));
-
-  const block = blocks.find(b => (b.dataset.division || '') === div_id);
-  const btn = btns.find(b => (b.dataset.division || '') === div_id);
-  if (!block || !btn) return;
-
-  write_collapsed(division_storage_key(div_id), collapsed);
-  block.classList.toggle('collapsed', collapsed);
-  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-}
-
-function set_team_collapsed(team, collapsed) {
-  let block = null;
-  let btn = null;
-
-  document.querySelectorAll('.team_block').forEach(b => {
-    if (b.dataset.team === team) block = b;
-  });
-
-  document.querySelectorAll('.team_title').forEach(b => {
-    if (b.dataset.team === team) btn = b;
-  });
-
-  if (!block || !btn) return;
-
-  write_collapsed(team_storage_key(team), collapsed);
-  block.classList.toggle('collapsed', collapsed);
-  btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-
-  if (!collapsed && document.body.dataset.is_searching !== '1') {
-    set_team_role_tab(team, 'batters');
-  }
-}
-
-/* =============================================================================
-   7) Mobile scaling for Plotly-heavy pages
-   ============================================================================= */
+/*#################################################################### G) Mobile scaling for Plotly-heavy pages ####################################################################*/
 function apply_mobile_scale() {
   const is_touch_mobile = window.matchMedia('(max-width: 900px) and (pointer: coarse)').matches;
   const content = document.getElementById('content_root');
@@ -511,7 +486,6 @@ function apply_mobile_scale() {
   const page = content.querySelector('.player_page');
   if (!page) return;
 
-  // Do not scale static pages (Home / Key)
   const has_static = page.querySelector('.static_page');
 
   if (!is_touch_mobile || has_static) {
@@ -530,6 +504,7 @@ function apply_mobile_scale() {
   content.style.width = `${Math.ceil(1350 * scale)}px`;
 }
 
+/*#################################################################### H) Matchups page (index/lists, UI builders, fragment rendering, form modes) ####################################################################*/
 const matchups_cache = new Map();
 let matchups_index = null;
 
@@ -537,7 +512,7 @@ async function load_matchups_index() {
   if (matchups_index !== null) return matchups_index;
 
   try {
-    const r = await fetch('assets/matchups/matchups_index.json', { cache: "no-store" });
+    const r = await fetch('assets/matchups/matchups_index.json', { cache: 'no-store' });
     if (!r.ok) {
       matchups_index = null;
       return null;
@@ -570,11 +545,11 @@ async function load_matchups_lists() {
     }
     matchups_lists = await r.json();
     dbg('loaded matchups_lists.json keys:', Object.keys(matchups_lists || {}));
-if (matchups_lists && matchups_lists.by_year && typeof matchups_lists.by_year === 'object') {
-  dbg('matchups_lists by_year years:', Object.keys(matchups_lists.by_year).slice(0, 10));
-} else {
-  dbg('matchups_lists has no by_year (or wrong shape)');
-}
+    if (matchups_lists && matchups_lists.by_year && typeof matchups_lists.by_year === 'object') {
+      dbg('matchups_lists by_year years:', Object.keys(matchups_lists.by_year).slice(0, 10));
+    } else {
+      dbg('matchups_lists has no by_year (or wrong shape)');
+    }
     return matchups_lists;
   } catch (e) {
     matchups_lists = null;
@@ -633,15 +608,6 @@ function set_select_options(sel, options, placeholder) {
   sel.addEventListener('change', () => sync_select_placeholder_class(sel));
 }
 
-function set_grouped_or_flat(sel, groups, flat, placeholder) {
-  const has_groups = Array.isArray(groups) && groups.length;
-  if (has_groups) {
-    set_select_options_grouped(sel, groups, placeholder);
-    return;
-  }
-  set_select_options(sel, flat || [], placeholder);
-}
-
 function set_select_options_grouped(sel, groups, placeholder) {
   sel.innerHTML = '';
 
@@ -666,6 +632,15 @@ function set_select_options_grouped(sel, groups, placeholder) {
 
   sync_select_placeholder_class(sel);
   sel.addEventListener('change', () => sync_select_placeholder_class(sel));
+}
+
+function set_grouped_or_flat(sel, groups, flat, placeholder) {
+  const has_groups = Array.isArray(groups) && groups.length;
+  if (has_groups) {
+    set_select_options_grouped(sel, groups, placeholder);
+    return;
+  }
+  set_select_options(sel, flat || [], placeholder);
 }
 
 function rebuild_select_keep_value(sel, rebuild_fn) {
@@ -772,7 +747,6 @@ function build_pitcher_groups(year_lists) {
   const sp = Array.isArray(year_lists.pitchers_sp_by_team) ? year_lists.pitchers_sp_by_team : [];
   const rp = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
 
-  // fallback: if you don't have SP/RP breakdown yet, use existing grouped list
   if (!sp.length && !rp.length) {
     return Array.isArray(year_lists.pitchers_by_team) ? year_lists.pitchers_by_team : [];
   }
@@ -780,7 +754,6 @@ function build_pitcher_groups(year_lists) {
   function base_team(label) {
     const s = String(label || '').trim();
     if (!s) return '';
-    // normalize labels like "ATL — Starters" or "ATL - Starters"
     const parts = s.split(/\s*[—-]\s*/);
     return String(parts[0] || '').trim();
   }
@@ -840,10 +813,9 @@ function allowed_pitchers_for_hitter_side(year_lists, hitter, side) {
 
   if (!h || !hvp || !hvp[h]) return null;
 
-  // If side not selected yet, union both sides.
   if (!s) {
-    const a = Array.isArray(hvp[h]['@']) ? hvp[h]['@'] : [];
-    const v = Array.isArray(hvp[h]['vs.']) ? hvp[h]['vs.'] : [];
+    const a = Array.isArray(hvp[h]['Away']) ? hvp[h]['Away'] : [];
+    const v = Array.isArray(hvp[h]['Home']) ? hvp[h]['Home'] : [];
     return new Set([].concat(a, v).map(x => String(x)));
   }
 
@@ -875,7 +847,7 @@ async function load_matchup_fragment(path) {
   if (cached) return cached;
 
   try {
-    const r = await fetch(path, { cache: "no-store" });
+    const r = await fetch(path, { cache: 'no-store' });
     if (!r.ok) return null;
     const html = await r.text();
     matchups_cache.set(path, html);
@@ -883,6 +855,138 @@ async function load_matchup_fragment(path) {
   } catch (e) {
     return null;
   }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Projected Pitchers (StatsAPI probables -> sp_vs_team fragments)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function remove_accents(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function to_yyyy_mm_dd_local(d) {
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function add_days_local(d, days) {
+  const x = new Date(d.getTime());
+  x.setDate(x.getDate() + Number(days || 0));
+  return x;
+}
+
+// MLB teamId -> your 3-letter code used by your matchup CSVs/fragments
+const team_id_to_code = {
+  108: 'LAA',
+  109: 'ARI',
+  110: 'BAL',
+  111: 'BOS',
+  112: 'CHC',
+  113: 'CIN',
+  114: 'CLE',
+  115: 'COL',
+  116: 'DET',
+  117: 'HOU',
+  118: 'KC',
+  119: 'LAD',
+  120: 'WAS',
+  121: 'NYM',
+  133: 'ATH', // Athletics
+  134: 'PIT',
+  135: 'SD',
+  136: 'SEA',
+  137: 'SF',
+  138: 'STL',
+  139: 'TB',
+  140: 'TEX',
+  141: 'TOR',
+  142: 'MIN',
+  143: 'PHI',
+  144: 'ATL',
+  145: 'CWS',
+  146: 'MIA',
+  147: 'NYY',
+  158: 'MIL',
+};
+
+async function fetch_probable_pitchers_for_date(date_str) {
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date_str)}&hydrate=probablePitcher`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) return [];
+
+  const j = await r.json();
+  const games = (j.dates && j.dates[0] && Array.isArray(j.dates[0].games)) ? j.dates[0].games : [];
+  const out = [];
+
+  for (const g of games) {
+    const away_id = g?.teams?.away?.team?.id;
+    const home_id = g?.teams?.home?.team?.id;
+
+    const away_team = team_id_to_code[away_id] || '';
+    const home_team = team_id_to_code[home_id] || '';
+    if (!away_team || !home_team) continue;
+
+    const away_p = g?.teams?.away?.probablePitcher?.fullName || '';
+    const home_p = g?.teams?.home?.probablePitcher?.fullName || '';
+
+    // Away SP is "Away" vs home team
+    if (away_p) {
+      out.push({
+        pitcher: remove_accents(away_p),
+        team: away_team,
+        opp: home_team,
+        side: 'Away',
+      });
+    }
+
+    // Home SP is "vs" vs away team
+    if (home_p) {
+      out.push({
+        pitcher: remove_accents(home_p),
+        team: home_team,
+        opp: away_team,
+        side: 'vs',
+      });
+    }
+  }
+
+  return out;
+}
+
+function matchup_sort_key(team, opp) {
+  const a = String(team || '').trim();
+  const b = String(opp || '').trim();
+  const lo = (a && b) ? (a < b ? a : b) : (a || b);
+  const hi = (a && b) ? (a < b ? b : a) : '';
+  return `${lo}||${hi}`;
+}
+
+function sort_projected_rows(rows) {
+  return (rows || []).slice().sort((x, y) => {
+    const kx = matchup_sort_key(x.team, x.opp);
+    const ky = matchup_sort_key(y.team, y.opp);
+    if (kx !== ky) return kx < ky ? -1 : 1;
+
+    // Stable tie-breakers
+    const tx = String(x.team || '');
+    const ty = String(y.team || '');
+    if (tx !== ty) return tx < ty ? -1 : 1;
+
+    const sx = String(x.side || '');
+    const sy = String(y.side || '');
+    if (sx !== sy) return sx < sy ? -1 : 1;
+
+    const px = String(x.pitcher || '');
+    const py = String(y.pitcher || '');
+    if (px !== py) return px < py ? -1 : 1;
+
+    return 0;
+  });
 }
 
 function init_matchups_page_if_present(content_root) {
@@ -900,17 +1004,57 @@ function init_matchups_page_if_present(content_root) {
   form_root.innerHTML = '';
   results_root.innerHTML = '';
 
+  const multi_form_state = {
+    multi_starter: { n: 1, rows: [] }, // [{ pitcher, side, team }]
+    multi_hitter: { n: 1, rows: [] },  // [{ hitter, side, pitcher }]
+  };
+
+  function clamp_rows_n(x) {
+    const v = Number(x);
+    if (!Number.isFinite(v)) return 1;
+    return Math.max(1, Math.min(7, Math.floor(v)));
+  }
+
+  function snapshot_multi_state(mode) {
+    if (mode !== 'multi_starter' && mode !== 'multi_hitter') return;
+
+    const st = multi_form_state[mode];
+    const n = clamp_rows_n(st.n);
+
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      if (mode === 'multi_starter') {
+        const p = document.getElementById(`matchups_pitcher_${i}`)?.value || '';
+        const s = document.getElementById(`matchups_side_${i}`)?.value || '';
+        const t = document.getElementById(`matchups_team_${i}`)?.value || '';
+        out.push({ pitcher: p, side: s, team: t });
+      } else {
+        const h = document.getElementById(`matchups_hitter_${i}`)?.value || '';
+        const s = document.getElementById(`matchups_side_${i}`)?.value || '';
+        const p = document.getElementById(`matchups_pitcher_${i}`)?.value || '';
+        out.push({ hitter: h, side: s, pitcher: p });
+      }
+    }
+
+    st.rows = out;
+    st.n = n;
+  }
+
+  const mode_bar = document.createElement('div');
+  mode_bar.style.display = 'flex';
+  mode_bar.style.justifyContent = 'space-between';
+  mode_bar.style.alignItems = 'center';
+  mode_bar.style.gap = '10px';
+
   const mode_select = document.createElement('select');
   mode_select.style.padding = '8px 10px';
   mode_select.style.border = '1px solid var(--border)';
   mode_select.style.borderRadius = '10px';
 
   const modes = [
-    ['sp_vs_team', 'Pitcher Start'],
-    ['sp_vs_2', 'Pitcher Double Start'],
+    ['projected_pitchers', 'Projected Pitchers'],
     ['multi_starter', 'Multiple Starting Pitchers'],
     ['rp_inning', 'Reliever Inning'],
-    ['hitter_vs_pitcher', 'Hitter vs. Pitcher'],
     ['multi_hitter', 'Multiple Hitters']
   ];
 
@@ -921,62 +1065,124 @@ function init_matchups_page_if_present(content_root) {
     mode_select.appendChild(o);
   });
 
-  mode_root.appendChild(mode_select);
+  const row_controls = document.createElement('div');
+  row_controls.style.display = 'none';
+  row_controls.style.alignItems = 'center';
+  row_controls.style.gap = '8px';
+
+  const rows_label = document.createElement('div');
+  rows_label.style.fontSize = '12px';
+  rows_label.style.fontWeight = '700';
+  rows_label.style.color = 'rgba(96,103,112,0.95)';
+  rows_label.textContent = 'Rows: 1';
+
+  const rows_minus = document.createElement('button');
+  rows_minus.type = 'button';
+  rows_minus.className = 'matchups_submit';
+  rows_minus.textContent = '−';
+
+  const rows_plus = document.createElement('button');
+  rows_plus.type = 'button';
+  rows_plus.className = 'matchups_submit';
+  rows_plus.textContent = '+';
+
+  row_controls.appendChild(rows_label);
+  row_controls.appendChild(rows_minus);
+  row_controls.appendChild(rows_plus);
+
+  mode_bar.appendChild(mode_select);
+  mode_bar.appendChild(row_controls);
+  mode_root.appendChild(mode_bar);
+
+  function sync_row_controls() {
+    const mode = mode_select.value;
+    const is_multi = (mode === 'multi_starter' || mode === 'multi_hitter');
+
+    row_controls.style.display = is_multi ? 'flex' : 'none';
+
+    if (is_multi) {
+      const n = clamp_rows_n(multi_form_state[mode].n);
+      multi_form_state[mode].n = n;
+      rows_label.textContent = `Rows: ${n}`;
+      rows_minus.disabled = (n <= 1);
+      rows_plus.disabled = (n >= 7);
+    }
+  }
+
+  rows_minus.addEventListener('click', (e) => {
+    e.preventDefault();
+    const mode = mode_select.value;
+    if (mode !== 'multi_starter' && mode !== 'multi_hitter') return;
+
+    snapshot_multi_state(mode);
+    multi_form_state[mode].n = clamp_rows_n(multi_form_state[mode].n - 1);
+    sync_row_controls();
+    build_form();
+  });
+
+  rows_plus.addEventListener('click', (e) => {
+    e.preventDefault();
+    const mode = mode_select.value;
+    if (mode !== 'multi_starter' && mode !== 'multi_hitter') return;
+
+    snapshot_multi_state(mode);
+    multi_form_state[mode].n = clamp_rows_n(multi_form_state[mode].n + 1);
+    sync_row_controls();
+    build_form();
+  });
+
+  sync_row_controls();
 
   function clear_results() {
     results_root.innerHTML = '';
   }
 
-function parse_matchup_stat_number(s) {
-  const raw = String(s || '').trim();
-  if (!raw) return NaN;
+  function parse_matchup_stat_number(s) {
+    const raw = String(s || '').trim();
+    if (!raw) return NaN;
 
-  // allow things like "+12.3", "-5", "3.0", and strip commas
-  const x = raw.replace(/,/g, '');
-  const m = x.match(/-?(?:\d+(?:\.\d*)?|\.\d+)/);
-  return m ? Number(m[0]) : NaN;
-}
-
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
-}
-
-function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best) {
-  const val = Number(v);
-  if (!Number.isFinite(val)) return '';
-
-  const lo = Math.min(worst, best);
-  const hi = Math.max(worst, best);
-  const vv = clamp(val, lo, hi);
-
-  const nlo = Math.min(neutral_lo, neutral_hi);
-  const nhi = Math.max(neutral_lo, neutral_hi);
-
-  // neutral band -> NO FILL (no grey)
-  if (vv >= nlo && vv <= nhi) {
-    return '';
+    const x = raw.replace(/,/g, '');
+    const m = x.match(/-?(?:\d+(?:\.\d*)?|\.\d+)/);
+    return m ? Number(m[0]) : NaN;
   }
 
-  // map to [0..1] where 0=worst (blue), 1=best (red)
-  const frac = (vv - worst) / (best - worst);
-  const f = clamp(frac, 0, 1);
+  function clamp(x, lo, hi) {
+    return Math.max(lo, Math.min(hi, x));
+  }
 
-  // opacity curve similar to your panels: stronger away from midpoint
-  const alpha_min = 0.25;
-  const alpha_max = 0.95;
-  const alpha_curve_pow = 0.40;
+  function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best) {
+    const val = Number(v);
+    if (!Number.isFinite(val)) return '';
 
-  const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
-  const a = alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow);
+    const lo = Math.min(worst, best);
+    const hi = Math.max(worst, best);
+    const vv = clamp(val, lo, hi);
 
-  if (f > 0.5) return `rgba(210,35,35,${a.toFixed(3)})`;
-  return `rgba(35,85,210,${a.toFixed(3)})`;
-}
+    const nlo = Math.min(neutral_lo, neutral_hi);
+    const nhi = Math.max(neutral_lo, neutral_hi);
 
-function is_matchup_stat_col(header_text) {
-  const h = String(header_text || '').trim();
-  return h.startsWith('+'); // "+All", "+FB", "+SI", etc.
-}
+    if (vv >= nlo && vv <= nhi) {
+      return '';
+    }
+
+    const frac = (vv - worst) / (best - worst);
+    const f = clamp(frac, 0, 1);
+
+    const alpha_min = 0.25;
+    const alpha_max = 0.95;
+    const alpha_curve_pow = 0.40;
+
+    const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
+    const a = alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow);
+
+    if (f > 0.5) return `rgba(210,35,35,${a.toFixed(3)})`;
+    return `rgba(35,85,210,${a.toFixed(3)})`;
+  }
+
+  function is_matchup_stat_col(header_text) {
+    const h = String(header_text || '').trim();
+    return h.startsWith('+');
+  }
 
   function extract_table_parts(fragment_html) {
     const doc = new DOMParser().parseFromString(fragment_html, 'text/html');
@@ -992,110 +1198,109 @@ function is_matchup_stat_col(header_text) {
     return { header_cells, row_cells };
   }
 
-async function render_fragments(paths, opts) {
-  clear_results();
+  async function render_fragments(paths, opts) {
+    clear_results();
 
-  const options = opts && typeof opts === 'object' ? opts : {};
-  const invert_stats = !!options.invert_stats;
+    const options = opts && typeof opts === 'object' ? opts : {};
+    const invert_stats = !!options.invert_stats;
 
-  const rows = [];
-  let header = null;
+    const rows = [];
+    let header = null;
 
-  for (const p of (paths || [])) {
-    if (!p) continue;
+    for (const p of (paths || [])) {
+      if (!p) continue;
 
-    const html = await load_matchup_fragment(p);
-    if (!html) continue;
+      const html = await load_matchup_fragment(p);
+      if (!html) continue;
 
-    const parts = extract_table_parts(html);
-    if (!parts) continue;
+      const parts = extract_table_parts(html);
+      if (!parts) continue;
 
-    if (!header && parts.header_cells.length) header = parts.header_cells;
-    if (parts.row_cells.length) rows.push(parts.row_cells);
-  }
+      if (!header && parts.header_cells.length) header = parts.header_cells;
+      if (parts.row_cells.length) rows.push(parts.row_cells);
+    }
 
-  if (!header || !rows.length) return;
+    if (!header || !rows.length) return;
 
-  function decimals_in_raw(raw) {
-    const s = String(raw || '').trim();
-    const m = s.match(/-?(?:\d+)(?:\.(\d+))?/);
-    if (!m) return null;
-    return m[1] ? m[1].length : 0;
-  }
+    function decimals_in_raw(raw) {
+      const s = String(raw || '').trim();
+      const m = s.match(/-?(?:\d+)(?:\.(\d+))?/);
+      if (!m) return null;
+      return m[1] ? m[1].length : 0;
+    }
 
-  function format_like_raw(raw, val) {
-    const d = decimals_in_raw(raw);
-    if (d === null) return String(val);
-    if (!Number.isFinite(val)) return String(raw || '').trim();
-    if (d === 0) return String(Math.round(val));
-    return val.toFixed(d);
-  }
+    function format_like_raw(raw, val) {
+      const d = decimals_in_raw(raw);
+      if (d === null) return String(val);
+      if (!Number.isFinite(val)) return String(raw || '').trim();
+      if (d === 0) return String(Math.round(val));
+      return val.toFixed(d);
+    }
 
-  const wrap = document.createElement('div');
-  wrap.className = 'matchup_table_wrap';
+    const wrap = document.createElement('div');
+    wrap.className = 'matchup_table_wrap';
 
-  const table = document.createElement('table');
-  table.className = 'matchup_table';
+    const table = document.createElement('table');
+    table.className = 'matchup_table';
 
-  const thead = document.createElement('thead');
-  const trh = document.createElement('tr');
-  header.forEach(h => {
-    const th = document.createElement('th');
-    th.textContent = h;
-    trh.appendChild(th);
-  });
-  thead.appendChild(trh);
-  table.appendChild(thead);
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    header.forEach(h => {
+      const th = document.createElement('th');
+      th.textContent = h;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    table.appendChild(thead);
 
-  const tbody = document.createElement('tbody');
-  rows.forEach(r => {
-    const tr = document.createElement('tr');
+    const tbody = document.createElement('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
 
-    r.forEach((cell, j) => {
-      const td = document.createElement('td');
+      r.forEach((cell, j) => {
+        const td = document.createElement('td');
 
-      const raw = String(cell || '').trim();
-      if (!raw) {
-        td.textContent = '—';
-        td.classList.add('cell_dash');
-        tr.appendChild(td);
-        return;
-      }
-
-      const h = (header && header[j]) ? header[j] : '';
-
-      // default text
-      td.textContent = raw;
-
-      // gradient for "+..." columns
-      if (is_matchup_stat_col(h)) {
-        const v0 = parse_matchup_stat_number(raw);
-        if (Number.isFinite(v0)) {
-          const v = invert_stats ? -v0 : v0;
-
-          // invert displayed score too (only when requested)
-          if (invert_stats) {
-            const txt = format_like_raw(raw, v);
-            td.textContent = (v > 0 ? `+${txt}` : String(txt));
-          }
-
-          td.style.background = rgba_from_two_sided_value(v, -100, -10, 10, 100);
-          td.style.color = 'rgba(20,20,20,0.95)';
+        const raw = String(cell || '').trim();
+        if (!raw) {
+          td.textContent = '—';
+          td.classList.add('cell_dash');
+          tr.appendChild(td);
+          return;
         }
-      }
 
-      tr.appendChild(td);
+        const h = (header && header[j]) ? header[j] : '';
+
+        td.textContent = raw;
+
+        if (is_matchup_stat_col(h)) {
+          const v0 = parse_matchup_stat_number(raw);
+          if (Number.isFinite(v0)) {
+            const v = invert_stats ? -v0 : v0;
+
+            if (invert_stats) {
+              const txt = format_like_raw(raw, v);
+              td.textContent = (v > 0 ? `+${txt}` : String(txt));
+            }
+
+            td.style.background = rgba_from_two_sided_value(v, -100, -10, 10, 100);
+            td.style.color = 'rgba(20,20,20,0.95)';
+          }
+        }
+
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
     });
 
-    tbody.appendChild(tr);
-  });
-
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-  results_root.appendChild(wrap);
-}
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    results_root.appendChild(wrap);
+  }
 
   async function build_form() {
+    snapshot_multi_state(mode_select.value);
+
     form_root.innerHTML = '';
     const prev_year = document.getElementById('matchups_year')?.value || '';
     clear_results();
@@ -1162,6 +1367,8 @@ async function render_fragments(paths, opts) {
       return fr[String(y)] || null;
     }
 
+    const preferred_year = String(window.DEFAULT_SEASON_YEAR || '2026');
+
     function refresh_lists_from_year(y) {
       const year_val = String(y || '').trim();
 
@@ -1200,89 +1407,76 @@ async function render_fragments(paths, opts) {
           pitchers_sp: Array.isArray(pack.pitchers_sp) ? pack.pitchers_sp : [],
         };
 
-function has_any(x) {
-  return Array.isArray(x) && x.length;
-}
+        function has_any(x) {
+          return Array.isArray(x) && x.length;
+        }
 
-function finalize_year_lists_from_pack_or_partial() {
-  // Ensure these always exist so the mode builders never see undefined.
-  year_lists.hitters_by_team = Array.isArray(year_lists.hitters_by_team) ? year_lists.hitters_by_team : [];
-  year_lists.pitchers_by_team = Array.isArray(year_lists.pitchers_by_team) ? year_lists.pitchers_by_team : [];
+        function finalize_year_lists_from_pack_or_partial() {
+          year_lists.hitters_by_team = Array.isArray(year_lists.hitters_by_team) ? year_lists.hitters_by_team : [];
+          year_lists.pitchers_by_team = Array.isArray(year_lists.pitchers_by_team) ? year_lists.pitchers_by_team : [];
 
-  year_lists.pitchers_sp_by_team = Array.isArray(year_lists.pitchers_sp_by_team) ? year_lists.pitchers_sp_by_team : [];
-  year_lists.pitchers_rp_by_team = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
+          year_lists.pitchers_sp_by_team = Array.isArray(year_lists.pitchers_sp_by_team) ? year_lists.pitchers_sp_by_team : [];
+          year_lists.pitchers_rp_by_team = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
 
-  year_lists.pitchers_sp = Array.isArray(year_lists.pitchers_sp) ? year_lists.pitchers_sp : [];
-  year_lists.pitchers_rp = Array.isArray(year_lists.pitchers_rp) ? year_lists.pitchers_rp : [];
+          year_lists.pitchers_sp = Array.isArray(year_lists.pitchers_sp) ? year_lists.pitchers_sp : [];
+          year_lists.pitchers_rp = Array.isArray(year_lists.pitchers_rp) ? year_lists.pitchers_rp : [];
 
-  year_lists.hitter_team_map =
-    (year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object') ? year_lists.hitter_team_map : {};
+          year_lists.hitter_team_map =
+            (year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object') ? year_lists.hitter_team_map : {};
 
-  // If pack didn't provide SP/RP breakdown, still populate both from the general pitcher lists.
-  // (This is the “same way SP does” behavior: the UI has lists to show.)
-  if (!has_any(year_lists.pitchers_sp_by_team) && has_any(year_lists.pitchers_by_team)) {
-    year_lists.pitchers_sp_by_team = year_lists.pitchers_by_team;
-  }
+          if (!has_any(year_lists.pitchers_sp_by_team) && has_any(year_lists.pitchers_by_team)) {
+            year_lists.pitchers_sp_by_team = year_lists.pitchers_by_team;
+          }
 
-  if (!has_any(year_lists.pitchers_sp) && has_any(pitchers)) {
-    year_lists.pitchers_sp = pitchers;
-  }
+          if (!has_any(year_lists.pitchers_sp) && has_any(pitchers)) {
+            year_lists.pitchers_sp = pitchers;
+          }
 
-  // If hitters list is missing, but we have a hitters_by_team list, derive hitters flat from it.
-  if (!has_any(hitters) && has_any(year_lists.hitters_by_team)) {
-    const s = new Set();
-    year_lists.hitters_by_team.forEach(g => (g.options || []).forEach(n => s.add(n)));
-    hitters = Array.from(s);
-  }
-}
+          if (!has_any(hitters) && has_any(year_lists.hitters_by_team)) {
+            const s = new Set();
+            year_lists.hitters_by_team.forEach(g => (g.options || []).forEach(n => s.add(n)));
+            hitters = Array.from(s);
+          }
+        }
 
-// If pack exists, keep it, but DO NOT early-return just because "some list" exists.
-// Instead, normalize missing lists and then decide if we still need fragment-derived build.
-finalize_year_lists_from_pack_or_partial();
+        finalize_year_lists_from_pack_or_partial();
 
-// If this is the "Current" year, prefer sidebar truth for teams + SP/RP roles.
-// This keeps matchups dropdowns aligned with the dashboard roster logic.
-if (String(year_val) === String(preferred_year)) {
-  const sb = build_sidebar_lists();
+        if (String(year_val) === String(preferred_year)) {
+          const sb = build_sidebar_lists();
 
-  if (Array.isArray(sb.hitters_by_team) && sb.hitters_by_team.length) {
-    hitters = sb.hitters;
-    year_lists.hitters_by_team = sb.hitters_by_team;
-    year_lists.hitter_team_map = sb.hitter_team_map;
-  }
+          if (Array.isArray(sb.hitters_by_team) && sb.hitters_by_team.length) {
+            hitters = sb.hitters;
+            year_lists.hitters_by_team = sb.hitters_by_team;
+            year_lists.hitter_team_map = sb.hitter_team_map;
+          }
 
-  if (Array.isArray(sb.pitchers_sp_by_team) && sb.pitchers_sp_by_team.length) {
-    year_lists.pitchers_sp_by_team = sb.pitchers_sp_by_team;
-    year_lists.pitchers_sp = sb.pitchers_sp;
-  }
+          if (Array.isArray(sb.pitchers_sp_by_team) && sb.pitchers_sp_by_team.length) {
+            year_lists.pitchers_sp_by_team = sb.pitchers_sp_by_team;
+            year_lists.pitchers_sp = sb.pitchers_sp;
+          }
 
-  if (Array.isArray(sb.pitchers_rp_by_team) && sb.pitchers_rp_by_team.length) {
-    year_lists.pitchers_rp_by_team = sb.pitchers_rp_by_team;
-    year_lists.pitchers_rp = sb.pitchers_rp;
-  }
+          if (Array.isArray(sb.pitchers_rp_by_team) && sb.pitchers_rp_by_team.length) {
+            year_lists.pitchers_rp_by_team = sb.pitchers_rp_by_team;
+            year_lists.pitchers_rp = sb.pitchers_rp;
+          }
 
-  // keep combined pitcher list coherent for hitter_vs_pitcher + other modes
-  const all_p = []
-    .concat(year_lists.pitchers_sp || [])
-    .concat(year_lists.pitchers_rp || []);
-  pitchers = Array.from(new Set(all_p)).sort((a, b) => a.localeCompare(b));
-}
+          const all_p = []
+            .concat(year_lists.pitchers_sp || [])
+            .concat(year_lists.pitchers_rp || []);
+          pitchers = Array.from(new Set(all_p)).sort((a, b) => a.localeCompare(b));
+        }
 
-const needs_hitters = !has_any(hitters) && !has_any(year_lists.hitters_by_team);
-const needs_pitchers = !has_any(pitchers) && !has_any(year_lists.pitchers_by_team);
-const needs_teams = !has_any(teams);
+        const needs_hitters = !has_any(hitters) && !has_any(year_lists.hitters_by_team);
+        const needs_pitchers = !has_any(pitchers) && !has_any(year_lists.pitchers_by_team);
+        const needs_teams = !has_any(teams);
 
-// If the pack gave us what we need, we're done.
-if (!needs_hitters && !needs_pitchers && !needs_teams) {
-  return;
-}
-
-// Otherwise we continue into fragment-derived build below (your existing fallback section).
+        if (!needs_hitters && !needs_pitchers && !needs_teams) {
+          return;
+        }
 
         dbg('pack was present but empty; falling back to fragment-derived lists');
       }
 
-      // Fallback: derive from fragments for this year (slower)
       const sp_team_root = get_mode_year_fragments(idx, 'sp_vs_team', year_val);
       const sp_2_root = get_mode_year_fragments(idx, 'sp_vs_2', year_val);
       const hvp_root = get_mode_year_fragments(idx, 'hitter_vs_pitcher', year_val);
@@ -1381,22 +1575,18 @@ if (!needs_hitters && !needs_pitchers && !needs_teams) {
         return groups;
       }
 
-const hb = map_to_groups(hitters_by_team);
-const pb = map_to_groups(pitchers_by_team);
+      const hb = map_to_groups(hitters_by_team);
+      const pb = map_to_groups(pitchers_by_team);
 
-year_lists = {
-  hitters_by_team: hb,
-  pitchers_by_team: pb,
-
-  // If you don't have true SP/RP classification from fragments, populate both lists
-  // so both SP and RP modes have working dropdowns.
-  pitchers_sp_by_team: pb,
-  pitchers_rp_by_team: pb,
-  pitchers_sp: pitchers,
-  pitchers_rp: pitchers,
-
-  hitter_team_map: year_lists.hitter_team_map || {},
-};
+      year_lists = {
+        hitters_by_team: hb,
+        pitchers_by_team: pb,
+        pitchers_sp_by_team: pb,
+        pitchers_rp_by_team: pb,
+        pitchers_sp: pitchers,
+        pitchers_rp: pitchers,
+        hitter_team_map: year_lists.hitter_team_map || {},
+      };
     }
 
     const mode = mode_select.value;
@@ -1408,7 +1598,7 @@ year_lists = {
     }
 
     function build_side_select(id) {
-      return build_select(id, '@/vs.', ['@', 'vs'], 'Select');
+      return build_select(id, 'Away/Home', ['Away', 'vs'], 'Select');
     }
 
     function append_row(row_root, items) {
@@ -1427,57 +1617,54 @@ year_lists = {
       return row_div;
     }
 
-    function build_submit_button(text) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = text;
-
-      btn.className = 'matchups_submit';
-
+    function build_action_buttons(on_submit, on_clear, submit_text) {
       const wrap = document.createElement('div');
       wrap.style.marginTop = '10px';
-      wrap.appendChild(btn);
+      wrap.style.display = 'flex';
+      wrap.style.gap = '8px';
+      wrap.style.alignItems = 'center';
+
+      const submit_btn = document.createElement('button');
+      submit_btn.type = 'button';
+      submit_btn.textContent = submit_text || 'Submit';
+      submit_btn.className = 'matchups_submit';
+      submit_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (typeof on_submit === 'function') on_submit();
+      });
+
+      const clear_btn = document.createElement('button');
+      clear_btn.type = 'button';
+      clear_btn.textContent = 'Clear';
+      clear_btn.className = 'matchups_submit';
+      clear_btn.style.background = 'rgba(210,35,35,0.12)';
+      clear_btn.style.borderColor = 'rgba(210,35,35,0.35)';
+      clear_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (typeof on_clear === 'function') on_clear();
+      });
+
+      wrap.appendChild(submit_btn);
+      wrap.appendChild(clear_btn);
 
       form_root.appendChild(wrap);
-      return btn;
+
+      return { submit_btn, clear_btn };
     }
 
-const year_obj = build_select('matchups_year', 'Year', years, 'Select year');
+    const year_obj = build_select('matchups_year', 'Year', years, 'Select year');
 
-const year_row = document.createElement('div');
-year_row.style.display = 'flex';
-year_row.style.flexWrap = 'wrap';
-year_row.style.gap = '8px';
-year_row.style.alignItems = 'flex-end';
+    const year_row = document.createElement('div');
+    year_row.style.display = 'flex';
+    year_row.style.flexWrap = 'wrap';
+    year_row.style.gap = '8px';
+    year_row.style.alignItems = 'flex-end';
 
-year_row.appendChild(year_obj.wrap);
+    year_row.appendChild(year_obj.wrap);
+    form_root.appendChild(year_row);
 
-const clear_btn = document.createElement('button');
-clear_btn.type = 'button';
-clear_btn.textContent = 'Clear';
-clear_btn.className = 'matchups_submit';
+    const year_sel = year_obj.sel;
 
-year_row.appendChild(clear_btn);
-
-form_root.appendChild(year_row);
-
-const year_sel = year_obj.sel;
-
-clear_btn.addEventListener('click', (e) => {
-  e.preventDefault();
-
-  // keep the year as-is, just rebuild the form (fast + guarantees everything clears)
-  const keep_year = String(year_sel.value || '').trim();
-  build_form().then(() => {
-    const y2 = document.getElementById('matchups_year');
-    if (y2 && keep_year) {
-      y2.value = keep_year;
-      y2.dispatchEvent(new Event('change'));
-    }
-  }).catch(() => {});
-});
-
-    const preferred_year = String(window.DEFAULT_SEASON_YEAR || '2026');
     const prev_year_s = String(prev_year || '').trim();
 
     if (prev_year_s && years.includes(prev_year_s)) {
@@ -1491,561 +1678,554 @@ clear_btn.addEventListener('click', (e) => {
     year_sel.addEventListener('change', () => {
       refresh_lists_from_year(year_sel.value);
       clear_results();
+      sync_row_controls();
+      snapshot_multi_state(mode_select.value);
     });
 
     refresh_lists_from_year(year_sel.value);
+    sync_row_controls();
 
-async function render_one(path, opts) {
-  await render_fragments([path], opts);
-}
+    function base_team_from_label(label) {
+      const s = String(label || '').trim();
+      if (!s) return '';
+      const parts = s.split(/\s*[—-]\s*/);
+      return String(parts[0] || '').trim();
+    }
 
-async function render_many(paths, opts) {
-  await render_fragments(paths.filter(Boolean), opts);
-}
+    function build_team_map_from_groups(groups) {
+      const out = {};
+      (groups || []).forEach(g => {
+        const team = base_team_from_label(g && g.label);
+        const opts = (g && Array.isArray(g.options)) ? g.options : [];
+        if (!team) return;
+        opts.forEach(n => {
+          const nm = String(n || '').trim();
+          if (nm && !out[nm]) out[nm] = team;
+        });
+      });
+      return out;
+    }
 
-    if (mode === 'sp_vs_team') {
-      const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
-      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
+    function filter_groups_excluding_team(groups, excluded_team) {
+      const ex = String(excluded_team || '').trim();
+      if (!ex) return groups || [];
 
-      const side_obj = build_side_select('matchups_side');
+      const out = [];
+      (groups || []).forEach(g => {
+        const team = base_team_from_label(g && g.label);
+        if (team && team === ex) return;
 
-      const team_obj = build_select('matchups_team', 'Team', teams, 'Select team');
+        const opts = (g && Array.isArray(g.options)) ? g.options : [];
+        if (opts.length) out.push({ label: g.label, options: opts });
+      });
+      return out;
+    }
 
-      append_row(form_root, [
-        { wrap: pitcher_obj.wrap, sel: pitcher_obj.sel },
-        side_obj,
-        team_obj,
-      ]);
+    function filter_flat_excluding_team(flat, team_map, excluded_team) {
+      const ex = String(excluded_team || '').trim();
+      if (!ex) return flat || [];
+      return (flat || []).filter(n => {
+        const nm = String(n || '').trim();
+        return nm && String(team_map[nm] || '').trim() !== ex;
+      });
+    }
 
-      const pitcher_sel = pitcher_obj.sel;
-      const side_sel = side_obj.sel;
-      const team_sel = team_obj.sel;
+    function get_pitcher_team_maps() {
+      const sp_groups = build_pitcher_groups(year_lists);
+      const rp_groups = Array.isArray(year_lists.pitchers_rp_by_team) ? year_lists.pitchers_rp_by_team : [];
+
+      const sp_map = build_team_map_from_groups(sp_groups);
+      const rp_map = build_team_map_from_groups(rp_groups);
+
+      return { sp_groups, rp_groups, sp_map, rp_map };
+    }
+
+    function get_hitter_team_map() {
+      const map_obj = (year_lists && year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object')
+        ? year_lists.hitter_team_map
+        : {};
+      return map_obj;
+    }
+
+    async function render_one(path, opts) {
+      await render_fragments([path], opts);
+    }
+
+    async function render_many(paths, opts) {
+      await render_fragments(paths.filter(Boolean), opts);
+    }
+
+    if (mode === 'projected_pitchers') {
+      const day_obj = make_select('matchups_proj_day', 'Day');
+      set_select_options(day_obj.sel, ['Today', 'Tomorrow', '+2 days', '+3 days', '+4 days'], 'Select');
+
+      form_root.appendChild(day_obj.wrap);
+
+      day_obj.sel.value = 'Today';
+      sync_select_placeholder_class(day_obj.sel);
 
       async function submit() {
+        clear_results();
+
+        const y = String(year_sel.value || '').trim();
+        if (!y) return;
+
+        const raw_day = String(day_obj.sel.value || '').trim();
+        const offset =
+          raw_day === 'Tomorrow' ? 1 :
+          raw_day === '+2 days' ? 2 :
+          raw_day === '+3 days' ? 3 :
+          raw_day === '+4 days' ? 4 :
+          0;
+
+        const date_str = to_yyyy_mm_dd_local(add_days_local(new Date(), offset));
+
+        try {
+          const probables = await fetch_probable_pitchers_for_date(date_str);
+
+          const resolved = [];
+          for (const p of probables) {
+            const p_key = safe_page_filename(p.pitcher);
+            const t_key = safe_page_filename(p.opp);
+
+            const path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, p.side, t_key]);
+            if (!path) continue;
+
+            resolved.push({
+              team: p.team,
+              opp: p.opp,
+              side: p.side,
+              pitcher: p.pitcher,
+              path,
+            });
+          }
+
+          const ordered = sort_projected_rows(resolved);
+
+          const seen = new Set();
+          const paths = [];
+          for (const row of ordered) {
+            if (seen.has(row.path)) continue;
+            seen.add(row.path);
+            paths.push(row.path);
+          }
+
+          if (!paths.length) {
+            results_root.innerHTML = `<div style='padding:10px;color:rgba(96,103,112,0.95);'>No matchup fragments found for ${date_str}.</div>`;
+            return;
+          }
+
+          await render_many(paths);
+        } catch (e) {
+          dbg('projected_pitchers submit error', e);
+        }
+      }
+
+      function clear_mode() {
+        clear_results();
+        day_obj.sel.value = 'Today';
+        sync_select_placeholder_class(day_obj.sel);
+      }
+
+      build_action_buttons(submit, clear_mode, 'Load');
+
+      function refresh_mode_options() {
+        clear_mode();
+      }
+
+      year_sel.addEventListener('change', refresh_mode_options);
+      return;
+    }
+
+    if (mode === 'multi_starter') {
+      const rows = [];
+
+      function add_row(i) {
+        const row_div = document.createElement('div');
+        row_div.style.display = 'flex';
+        row_div.style.flexWrap = 'wrap';
+        row_div.style.gap = '8px';
+        row_div.style.alignItems = 'flex-end';
+
+        const pitcher_obj = make_select(`matchups_pitcher_${i}`, `Pitcher ${i + 1}`);
+        set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select starter');
+
+        const side_obj = build_side_select(`matchups_side_${i}`);
+
+        const team_obj = make_select(`matchups_team_${i}`, 'Opp');
+
+        function refresh_team_for_row() {
+          const { sp_map } = get_pitcher_team_maps();
+          const p_team = sp_map[String(pitcher_obj.sel.value || '').trim()] || '';
+          const allowed_teams = p_team ? teams.filter(t => String(t) !== String(p_team)) : teams;
+
+          set_select_options(team_obj.sel, allowed_teams, 'Select team');
+
+          if (p_team && String(team_obj.sel.value || '').trim() === String(p_team)) {
+            team_obj.sel.value = '';
+          }
+          sync_select_placeholder_class(team_obj.sel);
+        }
+
+        pitcher_obj.sel.addEventListener('change', () => {
+          refresh_team_for_row();
+          clear_results();
+        });
+
+        refresh_team_for_row();
+
+        row_div.appendChild(pitcher_obj.wrap);
+        row_div.appendChild(side_obj.wrap);
+        row_div.appendChild(team_obj.wrap);
+
+        form_root.appendChild(row_div);
+
+        const saved = (multi_form_state.multi_starter.rows && multi_form_state.multi_starter.rows[i])
+          ? multi_form_state.multi_starter.rows[i]
+          : null;
+
+        if (saved) {
+          pitcher_obj.sel.value = saved.pitcher || '';
+          side_obj.sel.value = saved.side || '';
+          refresh_team_for_row();
+          team_obj.sel.value = saved.team || '';
+          sync_select_placeholder_class(pitcher_obj.sel);
+          sync_select_placeholder_class(side_obj.sel);
+          sync_select_placeholder_class(team_obj.sel);
+        }
+
+        rows.push({ p_sel: pitcher_obj.sel, s_sel: side_obj.sel, t_sel: team_obj.sel });
+      }
+
+      const st = multi_form_state.multi_starter;
+      const n = clamp_rows_n(st.n);
+      st.n = n;
+
+      for (let i = 0; i < n; i++) add_row(i);
+
+      const side_toggle = document.createElement('div');
+      side_toggle.style.display = 'flex';
+      side_toggle.style.gap = '8px';
+      side_toggle.style.margin = '10px 0 6px 0';
+      side_toggle.style.alignItems = 'center';
+
+      const away_btn = document.createElement('button');
+      away_btn.type = 'button';
+      away_btn.className = 'matchups_submit';
+      away_btn.textContent = 'Away';
+
+      const home_btn = document.createElement('button');
+      home_btn.type = 'button';
+      home_btn.className = 'matchups_submit';
+      home_btn.textContent = 'Home';
+
+      function set_all_sides(v) {
+        rows.forEach(r => {
+          r.s_sel.value = v;
+          sync_select_placeholder_class(r.s_sel);
+        });
+        clear_results();
+      }
+
+      away_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        set_all_sides('Away');
+      });
+
+      home_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        set_all_sides('vs');
+      });
+
+      side_toggle.appendChild(away_btn);
+      side_toggle.appendChild(home_btn);
+
+      form_root.insertBefore(side_toggle, form_root.firstChild.nextSibling);
+
+      async function submit() {
+        snapshot_multi_state('multi_starter');
+
         const y = year_sel.value;
-        const p = pitcher_sel.value;
-        const s = side_sel.value;
-        const t = team_sel.value;
-        if (!y || !p || !s || !t) return;
+        if (!y) return;
 
-        const p_key = safe_page_filename(p);
-        const t_key = safe_page_filename(t);
+        const paths = rows
+          .filter(r => r.p_sel.value && r.s_sel.value && r.t_sel.value)
+          .map(r => {
+            const p_key = safe_page_filename(r.p_sel.value);
+            const s = r.s_sel.value;
+            const t_key = safe_page_filename(r.t_sel.value);
+            return resolve_fragment(idx, y, 'sp_vs_team', [p_key, s, t_key]);
+          })
+          .filter(Boolean);
 
-        const path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s, t_key]);
-        await render_one(path);
+        const seen = new Set();
+        const uniq = [];
+        for (const p of paths) {
+          if (seen.has(p)) continue;
+          seen.add(p);
+          uniq.push(p);
+        }
+
+        await render_many(uniq);
       }
 
-      const submit_btn = build_submit_button('Submit');
-      submit_btn.addEventListener('click', submit);
-
-      function refresh_mode_options() {
+      function clear_mode() {
         clear_results();
-        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
-        set_select_options(team_sel, teams, 'Select team');
-
-        pitcher_sel.value = '';
-        side_sel.value = '';
-        team_sel.value = '';
+        multi_form_state.multi_starter.rows = [];
+        multi_form_state.multi_starter.n = 1;
+        sync_row_controls();
+        build_form();
       }
 
-      year_sel.addEventListener('change', refresh_mode_options);
+      build_action_buttons(submit, clear_mode);
       return;
     }
 
-    if (mode === 'sp_vs_2') {
-      const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
-      set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
-      form_root.appendChild(pitcher_obj.wrap);
+    if (mode === 'multi_hitter') {
+      const rows = [];
 
-      const side_0_obj = build_side_select('matchups_side_0');
-      const team_0_obj = build_select('matchups_team_0', 'Team (1)', teams, 'Select team');
+      function refresh_row_pitchers(row) {
+        const allowed = allowed_pitchers_for_hitter_side(year_lists, row.h_sel.value, row.s_sel.value);
+        const base_groups = build_pitcher_groups(year_lists);
 
-      const side_1_obj = build_side_select('matchups_side_1');
-      const team_1_obj = build_select('matchups_team_1', 'Team (2)', teams, 'Select team');
+        rebuild_select_keep_value(row.p_sel, () => {
+          if (allowed) {
+            const filtered_groups = filter_groups_to_allowed(base_groups, allowed);
 
-      append_row(form_root, [side_0_obj, team_0_obj]);
-      append_row(form_root, [side_1_obj, team_1_obj]);
-
-      const pitcher_sel = pitcher_obj.sel;
-      const side_sel_0 = side_0_obj.sel;
-      const team_sel_0 = team_0_obj.sel;
-      const side_sel_1 = side_1_obj.sel;
-      const team_sel_1 = team_1_obj.sel;
-
-async function submit() {
-  const y = year_sel.value;
-  const p = pitcher_sel.value;
-  if (!y || !p) return;
-
-  const p_key = safe_page_filename(p);
-
-  const combos = [
-    { side: side_sel_0.value, team: team_sel_0.value },
-    { side: side_sel_1.value, team: team_sel_1.value },
-  ];
-
-  const paths = combos
-    .filter(c => c.side && c.team)
-    .map(c => resolve_fragment(idx, y, 'sp_vs_2', [p_key, c.side, safe_page_filename(c.team)]))
-    .filter(Boolean);
-
-  // de-dupe while preserving order
-  const seen = new Set();
-  const uniq = [];
-  for (const path of paths) {
-    if (seen.has(path)) continue;
-    seen.add(path);
-    uniq.push(path);
-  }
-
-  await render_many(uniq);
-}
-
-      const submit_btn = build_submit_button('Submit');
-      submit_btn.addEventListener('click', submit);
-
-      function refresh_mode_options() {
-        clear_results();
-        set_grouped_or_flat(pitcher_sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select pitcher');
-        set_select_options(team_sel_0, teams, 'Select team');
-        set_select_options(team_sel_1, teams, 'Select team');
-
-        pitcher_sel.value = '';
-        side_sel_0.value = '';
-        team_sel_0.value = '';
-        side_sel_1.value = '';
-        team_sel_1.value = '';
+            if (filtered_groups.length) {
+              set_grouped_or_flat(row.p_sel, filtered_groups, [], 'Select pitcher');
+            } else {
+              const flat = pitchers.filter(p => allowed.has(String(p)));
+              set_grouped_or_flat(row.p_sel, [], flat, 'Select pitcher');
+            }
+          } else {
+            set_grouped_or_flat(row.p_sel, base_groups, pitchers, 'Select pitcher');
+          }
+        });
       }
 
-      year_sel.addEventListener('change', refresh_mode_options);
+      function add_row(i) {
+        const row_div = document.createElement('div');
+        row_div.style.display = 'flex';
+        row_div.style.flexWrap = 'wrap';
+        row_div.style.gap = '8px';
+        row_div.style.alignItems = 'flex-end';
+
+        const { wrap: h_wrap, sel: h_sel } = make_select(`matchups_hitter_${i}`, `Hitter ${i + 1}`);
+        set_grouped_or_flat(h_sel, year_lists.hitters_by_team, hitters, 'Select hitter');
+
+        const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'Away/Home');
+        set_select_options(s_sel, ['Away', 'vs'], 'Select');
+
+        const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
+        const pitcher_groups = build_pitcher_groups(year_lists);
+        set_grouped_or_flat(p_sel, pitcher_groups, pitchers, 'Select pitcher');
+
+        row_div.appendChild(h_wrap);
+        row_div.appendChild(s_wrap);
+        row_div.appendChild(p_wrap);
+
+        form_root.appendChild(row_div);
+
+        const row = { h_sel, s_sel, p_sel };
+        rows.push(row);
+
+        h_sel.addEventListener('change', () => {
+          refresh_row_pitchers(row);
+          clear_results();
+        });
+
+        s_sel.addEventListener('change', () => {
+          refresh_row_pitchers(row);
+          clear_results();
+        });
+
+        const saved = (multi_form_state.multi_hitter.rows && multi_form_state.multi_hitter.rows[i])
+          ? multi_form_state.multi_hitter.rows[i]
+          : null;
+
+        if (saved) {
+          row.h_sel.value = saved.hitter || '';
+          row.s_sel.value = saved.side || '';
+          refresh_row_pitchers(row);
+          row.p_sel.value = saved.pitcher || '';
+          sync_select_placeholder_class(row.h_sel);
+          sync_select_placeholder_class(row.s_sel);
+          sync_select_placeholder_class(row.p_sel);
+        }
+      }
+
+      const st = multi_form_state.multi_hitter;
+      const n = clamp_rows_n(st.n);
+      st.n = n;
+
+      for (let i = 0; i < n; i++) add_row(i);
+
+      const side_toggle = document.createElement('div');
+      side_toggle.style.display = 'flex';
+      side_toggle.style.gap = '8px';
+      side_toggle.style.margin = '10px 0 6px 0';
+      side_toggle.style.alignItems = 'center';
+
+      const away_btn = document.createElement('button');
+      away_btn.type = 'button';
+      away_btn.className = 'matchups_submit';
+      away_btn.textContent = 'Away';
+
+      const home_btn = document.createElement('button');
+      home_btn.type = 'button';
+      home_btn.className = 'matchups_submit';
+      home_btn.textContent = 'Home';
+
+      function set_all_sides(v) {
+        rows.forEach(r => {
+          r.s_sel.value = v;
+          sync_select_placeholder_class(r.s_sel);
+          refresh_row_pitchers(r);
+        });
+        clear_results();
+      }
+
+      away_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        set_all_sides('Away');
+      });
+
+      home_btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        set_all_sides('vs');
+      });
+
+      side_toggle.appendChild(away_btn);
+      side_toggle.appendChild(home_btn);
+
+      form_root.insertBefore(side_toggle, form_root.firstChild.nextSibling);
+
+      async function submit() {
+        snapshot_multi_state('multi_hitter');
+
+        const y = year_sel.value;
+        if (!y) return;
+
+        const paths = rows
+          .filter(r => r.h_sel.value && r.s_sel.value && r.p_sel.value)
+          .map(r => {
+            const h_key = safe_page_filename(r.h_sel.value);
+            const p_key = safe_page_filename(r.p_sel.value);
+            return resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, r.s_sel.value, p_key]);
+          })
+          .filter(Boolean);
+
+        const seen = new Set();
+        const uniq = [];
+        for (const p of paths) {
+          if (seen.has(p)) continue;
+          seen.add(p);
+          uniq.push(p);
+        }
+
+        await render_many(uniq);
+      }
+
+      function clear_mode() {
+        clear_results();
+        multi_form_state.multi_hitter.rows = [];
+        multi_form_state.multi_hitter.n = 1;
+        sync_row_controls();
+        build_form();
+      }
+
+      build_action_buttons(submit, clear_mode);
       return;
     }
-
-if (mode === 'multi_starter') {
-  const rows = [];
-
-  function add_row(i) {
-    const row_div = document.createElement('div');
-    row_div.style.display = 'flex';
-    row_div.style.flexWrap = 'wrap';
-    row_div.style.gap = '8px';
-    row_div.style.alignItems = 'flex-end';
-
-    const pitcher_obj = make_select(`matchups_pitcher_${i}`, `Pitcher ${i + 1}`);
-    set_grouped_or_flat(pitcher_obj.sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select starter');
-
-    const side_obj = build_side_select(`matchups_side_${i}`);
-
-    const team_obj = make_select(`matchups_team_${i}`, 'Opp');
-    set_select_options(team_obj.sel, teams, 'Select team');
-
-    row_div.appendChild(pitcher_obj.wrap);
-    row_div.appendChild(side_obj.wrap);
-    row_div.appendChild(team_obj.wrap);
-
-    form_root.appendChild(row_div);
-
-    rows.push({ p_sel: pitcher_obj.sel, s_sel: side_obj.sel, t_sel: team_obj.sel });
-  }
-
-  for (let i = 0; i < 7; i++) add_row(i);
-    // Home/Away toggle (sets ALL rows)
-  const side_toggle = document.createElement('div');
-  side_toggle.style.display = 'flex';
-  side_toggle.style.gap = '8px';
-  side_toggle.style.margin = '10px 0 6px 0';
-  side_toggle.style.alignItems = 'center';
-
-  const away_btn = document.createElement('button');
-  away_btn.type = 'button';
-  away_btn.className = 'matchups_submit';
-  away_btn.textContent = 'Away';
-
-  const home_btn = document.createElement('button');
-  home_btn.type = 'button';
-  home_btn.className = 'matchups_submit';
-  home_btn.textContent = 'Home';
-
-  function set_all_sides(v) {
-    rows.forEach(r => {
-      r.s_sel.value = v;
-      sync_select_placeholder_class(r.s_sel);
-    });
-    clear_results();
-  }
-
-  away_btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    set_all_sides('@');
-  });
-
-  home_btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    set_all_sides('vs');
-  });
-
-  side_toggle.appendChild(away_btn);
-  side_toggle.appendChild(home_btn);
-
-  form_root.insertBefore(side_toggle, form_root.firstChild.nextSibling);
-
-  function refresh_mode_options() {
-    clear_results();
-
-    rows.forEach(r => {
-      set_grouped_or_flat(r.p_sel, year_lists.pitchers_sp_by_team, year_lists.pitchers_sp, 'Select starter');
-      set_select_options(r.t_sel, teams, 'Select team');
-
-      r.p_sel.value = '';
-      r.s_sel.value = '';
-      r.t_sel.value = '';
-
-      sync_select_placeholder_class(r.p_sel);
-      sync_select_placeholder_class(r.s_sel);
-      sync_select_placeholder_class(r.t_sel);
-    });
-  }
-
-  year_sel.addEventListener('change', refresh_mode_options);
-
-  async function submit() {
-    const y = year_sel.value;
-    if (!y) return;
-
-    const paths = rows
-      .filter(r => r.p_sel.value && r.s_sel.value && r.t_sel.value)
-      .map(r => {
-        const p_key = safe_page_filename(r.p_sel.value);
-        const s = r.s_sel.value; // '@' or 'vs.'
-        const t_key = safe_page_filename(r.t_sel.value);
-        return resolve_fragment(idx, y, 'sp_vs_team', [p_key, s, t_key]);
-      })
-      .filter(Boolean);
-
-    // de-dupe while preserving order
-    const seen = new Set();
-    const uniq = [];
-    for (const p of paths) {
-      if (seen.has(p)) continue;
-      seen.add(p);
-      uniq.push(p);
-    }
-
-    await render_many(uniq);
-  }
-
-  const submit_btn = build_submit_button('Submit');
-  submit_btn.addEventListener('click', submit);
-  return;
-}
-
-if (mode === 'hitter_vs_pitcher') {
-  const hitter_obj = make_select('matchups_hitter', 'Hitter');
-  set_grouped_or_flat(hitter_obj.sel, year_lists.hitters_by_team, hitters, 'Select hitter');
-
-  const side_obj = build_side_select('matchups_side');
-
-  const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
-  const pitcher_groups = build_pitcher_groups(year_lists);
-  set_grouped_or_flat(pitcher_obj.sel, pitcher_groups, pitchers, 'Select pitcher');
-
-  append_row(form_root, [
-    { wrap: hitter_obj.wrap, sel: hitter_obj.sel },
-    side_obj,
-    { wrap: pitcher_obj.wrap, sel: pitcher_obj.sel },
-  ]);
-
-  const hitter_sel = hitter_obj.sel;
-  const side_sel = side_obj.sel;
-  const pitcher_sel = pitcher_obj.sel;
-
-function refresh_pitchers_for_selection() {
-  const allowed = allowed_pitchers_for_hitter_side(year_lists, hitter_sel.value, side_sel.value);
-
-  const base_groups = build_pitcher_groups(year_lists);
-
-  rebuild_select_keep_value(pitcher_sel, () => {
-    if (allowed) {
-      const filtered_groups = filter_groups_to_allowed(base_groups, allowed);
-
-      // fall back to flat if grouping filters everything out (rare but possible)
-      if (filtered_groups.length) {
-        set_grouped_or_flat(pitcher_sel, filtered_groups, [], 'Select pitcher');
-      } else {
-        const flat = pitchers.filter(p => allowed.has(String(p)));
-        set_grouped_or_flat(pitcher_sel, [], flat, 'Select pitcher');
-      }
-    } else {
-      set_grouped_or_flat(pitcher_sel, base_groups, pitchers, 'Select pitcher');
-    }
-  });
-}
-
-  hitter_sel.addEventListener('change', () => {
-    refresh_pitchers_for_selection();
-    clear_results();
-  });
-
-  side_sel.addEventListener('change', () => {
-    refresh_pitchers_for_selection();
-    clear_results();
-  });
-
-  async function submit() {
-    const y = year_sel.value;
-    const h = hitter_sel.value;
-    const s = side_sel.value;      // '@' or 'vs.'
-    const p = pitcher_sel.value;
-    if (!y || !h || !s || !p) return;
-
-    const h_key = safe_page_filename(h);
-    const p_key = safe_page_filename(p);
-
-    const path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, s, p_key]);
-    await render_one(path);
-  }
-
-  const submit_btn = build_submit_button('Submit');
-  submit_btn.addEventListener('click', submit);
-
-  function refresh_mode_options() {
-    clear_results();
-
-    set_grouped_or_flat(hitter_sel, year_lists.hitters_by_team, hitters, 'Select hitter');
-    hitter_sel.value = '';
-    side_sel.value = '';
-
-    // reset pitcher list to broad; then filter once user picks hitter/side
-    const base_groups = build_pitcher_groups(year_lists);
-    set_grouped_or_flat(pitcher_sel, base_groups, pitchers, 'Select pitcher');
-    pitcher_sel.value = '';
-  }
-
-  year_sel.addEventListener('change', refresh_mode_options);
-  return;
-}
-if (mode === 'multi_hitter') {
-  const rows = [];
-
-function refresh_row_pitchers(row) {
-  const allowed = allowed_pitchers_for_hitter_side(year_lists, row.h_sel.value, row.s_sel.value);
-  const base_groups = build_pitcher_groups(year_lists);
-
-  rebuild_select_keep_value(row.p_sel, () => {
-    if (allowed) {
-      const filtered_groups = filter_groups_to_allowed(base_groups, allowed);
-
-      if (filtered_groups.length) {
-        set_grouped_or_flat(row.p_sel, filtered_groups, [], 'Select pitcher');
-      } else {
-        const flat = pitchers.filter(p => allowed.has(String(p)));
-        set_grouped_or_flat(row.p_sel, [], flat, 'Select pitcher');
-      }
-    } else {
-      set_grouped_or_flat(row.p_sel, base_groups, pitchers, 'Select pitcher');
-    }
-  });
-}
-
-  function add_row(i) {
-    const row_div = document.createElement('div');
-    row_div.style.display = 'flex';
-    row_div.style.flexWrap = 'wrap';
-    row_div.style.gap = '8px';
-    row_div.style.alignItems = 'flex-end';
-
-    const { wrap: h_wrap, sel: h_sel } = make_select(`matchups_hitter_${i}`, `Hitter ${i + 1}`);
-    set_grouped_or_flat(h_sel, year_lists.hitters_by_team, hitters, 'Select hitter');
-
-    const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, '@/vs.');
-    set_select_options(s_sel, ['@', 'vs'], 'Select');
-
-    const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
-    const pitcher_groups = build_pitcher_groups(year_lists);
-    set_grouped_or_flat(p_sel, pitcher_groups, pitchers, 'Select pitcher');
-
-    row_div.appendChild(h_wrap);
-    row_div.appendChild(s_wrap);
-    row_div.appendChild(p_wrap);
-
-    form_root.appendChild(row_div);
-
-    const row = { h_sel, s_sel, p_sel };
-    rows.push(row);
-
-    h_sel.addEventListener('change', () => {
-      refresh_row_pitchers(row);
-      clear_results();
-    });
-
-    s_sel.addEventListener('change', () => {
-      refresh_row_pitchers(row);
-      clear_results();
-    });
-  }
-
-  for (let i = 0; i < 7; i++) add_row(i);
-
-    // Home/Away toggle (sets ALL rows)
-  const side_toggle = document.createElement('div');
-  side_toggle.style.display = 'flex';
-  side_toggle.style.gap = '8px';
-  side_toggle.style.margin = '10px 0 6px 0';
-  side_toggle.style.alignItems = 'center';
-
-  const away_btn = document.createElement('button');
-  away_btn.type = 'button';
-  away_btn.className = 'matchups_submit';
-  away_btn.textContent = 'Away';
-
-  const home_btn = document.createElement('button');
-  home_btn.type = 'button';
-  home_btn.className = 'matchups_submit';
-  home_btn.textContent = 'Home';
-
-  function set_all_sides(v) {
-    rows.forEach(r => {
-      r.s_sel.value = v;
-      sync_select_placeholder_class(r.s_sel);
-
-      // changing side changes allowed pitchers
-      refresh_row_pitchers(r);
-    });
-    clear_results();
-  }
-
-  away_btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    set_all_sides('@');
-  });
-
-  home_btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    set_all_sides('vs');
-  });
-
-  side_toggle.appendChild(away_btn);
-  side_toggle.appendChild(home_btn);
-
-  // put the toggle above the first row
-  form_root.insertBefore(side_toggle, form_root.firstChild.nextSibling);
-
-  function refresh_mode_options() {
-    clear_results();
-
-    const pitcher_groups_next = build_pitcher_groups(year_lists);
-
-    rows.forEach(r => {
-      set_grouped_or_flat(r.h_sel, year_lists.hitters_by_team, hitters, 'Select hitter');
-      set_grouped_or_flat(r.p_sel, pitcher_groups_next, pitchers, 'Select pitcher');
-      r.h_sel.value = '';
-      r.s_sel.value = '';
-      r.p_sel.value = '';
-      sync_select_placeholder_class(r.h_sel);
-      sync_select_placeholder_class(r.s_sel);
-      sync_select_placeholder_class(r.p_sel);
-    });
-  }
-
-  year_sel.addEventListener('change', refresh_mode_options);
-
-  async function submit() {
-    const y = year_sel.value;
-    if (!y) return;
-
-    const paths = rows
-      .filter(r => r.h_sel.value && r.s_sel.value && r.p_sel.value)
-      .map(r => {
-        const h_key = safe_page_filename(r.h_sel.value);
-        const p_key = safe_page_filename(r.p_sel.value);
-        return resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, r.s_sel.value, p_key]);
-      })
-      .filter(Boolean);
-
-    // de-dupe while preserving order
-    const seen = new Set();
-    const uniq = [];
-    for (const p of paths) {
-      if (seen.has(p)) continue;
-      seen.add(p);
-      uniq.push(p);
-    }
-
-    await render_many(uniq);
-  }
-
-  const submit_btn = build_submit_button('Submit');
-  submit_btn.addEventListener('click', submit);
-  return;
-}
 
     if (mode === 'rp_inning') {
-      // RP inning reuses hitter_vs_pitcher fragments:
-      // - one pitcher
-      // - three hitters
-      // - one shared side (@ or vs.)
-
       const pitcher_obj = make_select('matchups_pitcher', 'Pitcher');
       set_grouped_or_flat(
-  pitcher_obj.sel,
-  year_lists.pitchers_rp_by_team,
-  year_lists.pitchers_rp,
-  'Select reliever'
-);
+        pitcher_obj.sel,
+        year_lists.pitchers_rp_by_team,
+        year_lists.pitchers_rp,
+        'Select reliever'
+      );
       const pitcher_sel = pitcher_obj.sel;
 
       const side_obj = build_side_select('matchups_side');
       const side_sel = side_obj.sel;
 
       const { wrap: b1_wrap, sel: b1_sel } = make_select('matchups_b1', 'Batter 1');
-      set_grouped_or_flat(b1_sel, year_lists.hitters_by_team, hitters, 'Select batter');
-
       const { wrap: b2_wrap, sel: b2_sel } = make_select('matchups_b2', 'Batter 2');
-      set_grouped_or_flat(b2_sel, year_lists.hitters_by_team, hitters, 'Select batter');
-
       const { wrap: b3_wrap, sel: b3_sel } = make_select('matchups_b3', 'Batter 3');
-      set_grouped_or_flat(b3_sel, year_lists.hitters_by_team, hitters, 'Select batter');
 
-function hitters_for_team(team) {
-  const t = String(team || '').trim();
-  if (!t) return hitters;
+      function hitters_for_team(team) {
+        const t = String(team || '').trim();
+        if (!t) return hitters;
 
-  const g = (year_lists.hitters_by_team || []).find(x => String(x.label || '').trim() === t);
-  const opts = g ? (g.options || []) : [];
-  return opts.length ? opts : hitters;
-}
+        const g = (year_lists.hitters_by_team || []).find(x => String(x.label || '').trim() === t);
+        const opts = g ? (g.options || []) : [];
+        return opts.length ? opts : hitters;
+      }
 
-function apply_same_team_filter() {
-  const map_obj = (year_lists && year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object')
-    ? year_lists.hitter_team_map
-    : {};
+      function refresh_hitters_excluding_rp_team() {
+        const { rp_map } = get_pitcher_team_maps();
+        const rp_team = rp_map[String(pitcher_sel.value || '').trim()] || '';
 
-  const b1 = String(b1_sel.value || '').trim();
-  const prev_b2 = String(b2_sel.value || '').trim();
-  const prev_b3 = String(b3_sel.value || '').trim();
+        const hitter_groups = Array.isArray(year_lists.hitters_by_team) ? year_lists.hitters_by_team : [];
+        const groups_ok = rp_team ? filter_groups_excluding_team(hitter_groups, rp_team) : hitter_groups;
 
-  const team = b1 ? (map_obj[b1] || '') : '';
-  const base_allowed = team ? hitters_for_team(team) : hitters;
+        const hitter_team_map = get_hitter_team_map();
+        const flat_ok = rp_team ? filter_flat_excluding_team(hitters, hitter_team_map, rp_team) : hitters;
 
-  const allowed_b2 = base_allowed.filter(x => x !== b1);
-  const allowed_b3 = base_allowed.filter(x => x !== b1 && x !== prev_b2);
+        set_grouped_or_flat(b1_sel, groups_ok, flat_ok, 'Select batter');
+        set_grouped_or_flat(b2_sel, groups_ok, flat_ok, 'Select batter');
+        set_grouped_or_flat(b3_sel, groups_ok, flat_ok, 'Select batter');
 
-  set_grouped_or_flat(b2_sel, [], allowed_b2, 'Select batter');
-  set_grouped_or_flat(b3_sel, [], allowed_b3, 'Select batter');
+        b1_sel.value = '';
+        b2_sel.value = '';
+        b3_sel.value = '';
 
-  if (prev_b2 && allowed_b2.includes(prev_b2)) b2_sel.value = prev_b2;
-  else b2_sel.value = '';
+        sync_select_placeholder_class(b1_sel);
+        sync_select_placeholder_class(b2_sel);
+        sync_select_placeholder_class(b3_sel);
+      }
 
-  const b2_now = String(b2_sel.value || '').trim();
-  const allowed_b3_final = base_allowed.filter(x => x !== b1 && x !== b2_now);
-  set_grouped_or_flat(b3_sel, [], allowed_b3_final, 'Select batter');
+      refresh_hitters_excluding_rp_team();
 
-  if (prev_b3 && allowed_b3_final.includes(prev_b3)) b3_sel.value = prev_b3;
-  else b3_sel.value = '';
+      pitcher_sel.addEventListener('change', () => {
+        refresh_hitters_excluding_rp_team();
+        clear_results();
+      });
 
-  sync_select_placeholder_class(b2_sel);
-  sync_select_placeholder_class(b3_sel);
-}
+      function apply_same_team_filter() {
+        const map_obj = (year_lists && year_lists.hitter_team_map && typeof year_lists.hitter_team_map === 'object')
+          ? year_lists.hitter_team_map
+          : {};
+
+        const b1 = String(b1_sel.value || '').trim();
+        const prev_b2 = String(b2_sel.value || '').trim();
+        const prev_b3 = String(b3_sel.value || '').trim();
+
+        const team = b1 ? (map_obj[b1] || '') : '';
+        const base_allowed = team ? hitters_for_team(team) : hitters;
+
+        const allowed_b2 = base_allowed.filter(x => x !== b1);
+        const allowed_b3 = base_allowed.filter(x => x !== b1 && x !== prev_b2);
+
+        set_grouped_or_flat(b2_sel, [], allowed_b2, 'Select batter');
+        set_grouped_or_flat(b3_sel, [], allowed_b3, 'Select batter');
+
+        if (prev_b2 && allowed_b2.includes(prev_b2)) b2_sel.value = prev_b2;
+        else b2_sel.value = '';
+
+        const b2_now = String(b2_sel.value || '').trim();
+        const allowed_b3_final = base_allowed.filter(x => x !== b1 && x !== b2_now);
+        set_grouped_or_flat(b3_sel, [], allowed_b3_final, 'Select batter');
+
+        if (prev_b3 && allowed_b3_final.includes(prev_b3)) b3_sel.value = prev_b3;
+        else b3_sel.value = '';
+
+        sync_select_placeholder_class(b2_sel);
+        sync_select_placeholder_class(b3_sel);
+      }
 
       b1_sel.addEventListener('change', () => {
         apply_same_team_filter();
@@ -2053,13 +2233,13 @@ function apply_same_team_filter() {
       });
 
       b2_sel.addEventListener('change', () => {
-  apply_same_team_filter();
-  clear_results();
-});
+        apply_same_team_filter();
+        clear_results();
+      });
 
-b3_sel.addEventListener('change', () => {
-  clear_results();
-});
+      b3_sel.addEventListener('change', () => {
+        clear_results();
+      });
 
       apply_same_team_filter();
 
@@ -2093,19 +2273,8 @@ b3_sel.addEventListener('change', () => {
         await render_many(paths, { invert_stats: true });
       }
 
-      const submit_btn = build_submit_button('Submit');
-      submit_btn.addEventListener('click', submit);
-
-      function refresh_mode_options() {
+      function clear_mode() {
         clear_results();
-
-        set_grouped_or_flat(
-  pitcher_sel,
-  year_lists.pitchers_rp_by_team,
-  year_lists.pitchers_rp,
-  'Select reliever'
-);
-        set_grouped_or_flat(b1_sel, year_lists.hitters_by_team, hitters, 'Select batter');
 
         pitcher_sel.value = '';
         side_sel.value = '';
@@ -2113,26 +2282,288 @@ b3_sel.addEventListener('change', () => {
         b2_sel.value = '';
         b3_sel.value = '';
 
+        sync_select_placeholder_class(pitcher_sel);
+        sync_select_placeholder_class(side_sel);
+        sync_select_placeholder_class(b1_sel);
+        sync_select_placeholder_class(b2_sel);
+        sync_select_placeholder_class(b3_sel);
+
+        refresh_hitters_excluding_rp_team();
         apply_same_team_filter();
       }
 
-      year_sel.addEventListener('change', refresh_mode_options);
+      build_action_buttons(submit, clear_mode);
       return;
     }
   }
 
-  mode_select.addEventListener('change', build_form);
+  mode_select.addEventListener('change', () => {
+    snapshot_multi_state(mode_select.value);
+    sync_row_controls();
+    build_form();
+  });
+
   build_form();
 }
 
-/* =============================================================================
-   8) Init wiring
-   ============================================================================= */
+/*#################################################################### A.5) Stat glossary popovers ####################################################################*/
+
+const stat_glossary = {
+  // Fill these in over time; keys should match data-stat values in HTML
+  score: {
+    title: 'Score',
+    body: 'Contact, counting stats, discipline, and pitch score all wrapped up.',
+  },
+  all_pitches: {
+    title: 'All Pitches',
+    body: 'All Pitches Average. Scoring system similar to Score but per individual pitch.',
+  },
+  whiff_pct: {
+    title: 'Whiff%',
+    body: 'Whiff rate: Swings and Misses / Swings.',
+  },
+  csw_pct: {
+    title: 'CSW%',
+    body: 'Called Strikes + Whiffs / Pitches',
+  },
+  p_ipa: {
+    title: 'P/PA',
+    body: 'Pitches per Plate Appearance.',
+  },
+  sweet_spot_pct: {
+    title: 'SwSp%',
+    body: 'Sweet Spot %: typically balls hit between ~8 and ~32 degrees',
+  },
+  good_pitches: {
+    title: 'Good Pitches',
+    body: 'Pitch score on good quality pitches.',
+  },
+  meatballs: {
+    title: 'Meatballs',
+    body: 'Pitch score on bad quality pitches.',
+  },
+  // pitchers
+  pvelo: {
+    title: 'Velo',
+    body: 'Perceived velocity',
+  },
+  swstr_pct: {
+    title: 'SwStr%',
+    body: 'Swings and Misses / Pitches.',
+  },
+  strike_pct: {
+    title: 'Strike%',
+    body: 'Percentage of pitches that are strikes',
+  },
+};
+
+let stat_popover_nodes = null;
+
+function escape_html(s) {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function wrap_paragraphs(text) {
+  const parts = String(text || '').split('\n').map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return '<p>No description found.</p>';
+  return parts.map(x => `<p>${escape_html(x)}</p>`).join('');
+}
+
+function stat_popover_on_keydown(e) {
+  if (e.key === 'Escape') remove_stat_popover();
+}
+
+function remove_stat_popover() {
+  if (!stat_popover_nodes) return;
+  stat_popover_nodes.backdrop.remove();
+  stat_popover_nodes.popover.remove();
+  stat_popover_nodes = null;
+  document.removeEventListener('keydown', stat_popover_on_keydown, true);
+}
+
+function build_stat_popover_html(defn, stat_key) {
+  const title = defn?.title || stat_key || 'Stat';
+  const body = defn?.body || 'No description found.';
+
+  return `
+    <div class='stat_popover_header'>
+      <div class='stat_popover_title'>${escape_html(title)}</div>
+      <button type='button' class='stat_popover_close' aria-label='Close'>×</button>
+    </div>
+    <div class='stat_popover_body'>
+      ${wrap_paragraphs(body)}
+    </div>
+  `;
+}
+
+function place_popover_near_anchor(popover_el, anchor_el) {
+  const pad = 10;
+  const r = anchor_el.getBoundingClientRect();
+  const pr = popover_el.getBoundingClientRect();
+
+  let left = r.left;
+  let top = r.bottom + 8;
+
+  left = Math.min(left, window.innerWidth - pr.width - pad);
+  left = Math.max(left, pad);
+
+  if (top + pr.height + pad > window.innerHeight) {
+    top = r.top - pr.height - 8;
+  }
+  top = Math.max(top, pad);
+
+  popover_el.style.left = `${Math.round(left)}px`;
+  popover_el.style.top = `${Math.round(top)}px`;
+}
+
+function show_stat_popover(anchor_el, stat_key) {
+  remove_stat_popover();
+
+  const defn = stat_glossary[stat_key] || { title: stat_key, body: 'No description found.' };
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'stat_popover_backdrop';
+
+  const popover = document.createElement('div');
+  popover.className = 'stat_popover';
+  popover.setAttribute('role', 'dialog');
+  popover.setAttribute('aria-modal', 'true');
+  popover.innerHTML = build_stat_popover_html(defn, stat_key);
+
+  document.body.appendChild(backdrop);
+  document.body.appendChild(popover);
+
+  place_popover_near_anchor(popover, anchor_el);
+
+  stat_popover_nodes = { backdrop, popover };
+
+  const on_reflow = () => {
+    if (!stat_popover_nodes) return;
+    place_popover_near_anchor(popover, anchor_el);
+  };
+
+  const cleanup = () => {
+    window.removeEventListener('resize', on_reflow);
+    window.removeEventListener('scroll', on_reflow, true);
+    document.removeEventListener('keydown', stat_popover_on_keydown, true);
+    remove_stat_popover();
+  };
+
+  backdrop.addEventListener('click', cleanup, { passive: true });
+  popover.querySelector('.stat_popover_close').addEventListener('click', cleanup);
+
+  window.addEventListener('resize', on_reflow, { passive: true });
+  window.addEventListener('scroll', on_reflow, { passive: true, capture: true });
+
+  document.addEventListener('keydown', stat_popover_on_keydown, true);
+}
+
+function install_stat_glossary_popovers() {
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('.stat_key[data-stat]');
+    if (!el) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const stat_key = el.getAttribute('data-stat');
+    if (!stat_key) return;
+
+    show_stat_popover(el, stat_key);
+  });
+}
+
+function normalize_stat_label(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[%]/g, ' pct')
+    .replace(/[^a-z0-9 ]+/g, '');
+}
+
+function parse_json_dataset(s) {
+  try {
+    return JSON.parse(String(s || ''));
+  } catch {
+    return null;
+  }
+}
+
+function stat_key_from_label(plot_el, label_text) {
+  const lbl = String(label_text || '').trim();
+  if (!lbl) return null;
+
+  const map = parse_json_dataset(plot_el?.dataset?.labelToStat);
+  if (map && map[lbl]) return map[lbl];
+
+  // Optional fallback if a plot didn’t get a mapping for some reason
+  const norm = normalize_stat_label(lbl);
+
+  if (norm === 'velo' || norm === 'pvelocity') return 'pvelo';
+  if (norm === 'cs whiffs pct' || norm === 'csw pct') return 'csw_pct';
+  if (norm === 'whiff pct') return 'whiff_pct';
+  if (norm === 'swstr pct') return 'swstr_pct';
+  if (norm === 'strike pct') return 'strike_pct';
+  if (norm === 'swsp pct' || norm === 'sweet spot pct') return 'sweet_spot_pct';
+  if (norm === 'ppa' || norm === 'ppa pitchespa' || norm === 'pppa') return 'p_ipa';
+
+  return null;
+}
+
+function install_plotly_tick_popovers(root) {
+  const scope = root || document;
+
+  // Plotly charts end up as <div class="js-plotly-plot"> ... <svg> ...
+  const plots = Array.from(scope.querySelectorAll('.js-plotly-plot'));
+  plots.forEach(plot => {
+    // Avoid re-binding
+    if (plot.dataset.tick_popovers_inited === '1') return;
+    plot.dataset.tick_popovers_inited = '1';
+
+    function bind_once() {
+      // y-axis tick labels are SVG <text> nodes under g.ytick
+      const ticks = plot.querySelectorAll('g.ytick text, g.yaxislayer-above text');
+      ticks.forEach(tn => {
+        if (!tn || tn.dataset.pop_bound === '1') return;
+
+        const raw = (tn.textContent || '').trim();
+        const k = stat_key_from_label(plot, raw);
+        if (!k) return;
+
+        tn.dataset.pop_bound = '1';
+        tn.style.cursor = 'pointer';
+
+        tn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          show_stat_popover(tn, k);
+        });
+      });
+    }
+
+    // Bind after Plotly renders (covers first render + relayouts)
+    plot.on?.('plotly_afterplot', bind_once);
+    plot.on?.('plotly_relayout', bind_once);
+
+    // Also try immediately in case it’s already rendered
+    bind_once();
+  });
+}
+
+/*#################################################################### I) DOMContentLoaded wiring (events + initial state) ####################################################################*/
 document.addEventListener('DOMContentLoaded', () => {
   const toggle_sidebar_btn = document.getElementById('toggle_sidebar');
   const is_touch_mobile = window.matchMedia('(max-width: 900px) and (pointer: coarse)').matches;
   if (toggle_sidebar_btn && !is_touch_mobile) toggle_sidebar_btn.style.display = 'none';
 
+  install_stat_glossary_popovers();
+  install_plotly_tick_popovers(document);
   const sidebar = document.querySelector('.sidebar');
 
   function set_sidebar_hidden(hidden) {
@@ -2151,7 +2582,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Team collapse clicks
   document.querySelectorAll('.team_title').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -2165,7 +2595,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Division collapse clicks
   document.querySelectorAll('.division_title').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -2179,7 +2608,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Init collapse defaults
   document.querySelectorAll('.team_block').forEach(tb => {
     const team = tb.dataset.team || '';
     const collapsed = read_collapsed(team_storage_key(team), true);
@@ -2192,14 +2620,12 @@ document.addEventListener('DOMContentLoaded', () => {
     set_division_collapsed(div_id, collapsed);
   });
 
-  // Role tabs
   document.querySelectorAll('.role_tab').forEach(btn => {
     btn.addEventListener('click', () => {
       set_team_role_tab(btn.dataset.team, btn.dataset.role);
     });
   });
 
-  // Link clicks load pages via fetch
   document.querySelectorAll('.toc_link').forEach(a => {
     const page_id = a.dataset.page;
     const file = a.dataset.file;
@@ -2211,7 +2637,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Search + clear button
   const search = document.getElementById('player_search');
   const clear_btn = document.getElementById('search_clear');
 

@@ -702,3 +702,73 @@ html, body {
     max-width: 100%;
   }
 }
+
+/* =============================================================================
+   Mobile adjustments
+   ============================================================================= */
+
+/* Avoid iOS auto-zoom quirks and keep font sizing stable */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Bigger tap targets + prevent iOS zoom on inputs */
+@media (max-width: 900px) and (pointer: coarse) {
+  .toc_link,
+  .role_tab,
+  .year_btn,
+  .toggle_sidebar,
+  .search_clear {
+    min-height: 40px;
+  }
+
+  .search_box {
+    min-height: 40px;
+    font-size: 16px;
+  }
+}
+
+/* Let ONLY the table wrappers scroll horizontally, not the whole page */
+@media (max-width: 900px) {
+  .content {
+    overflow-x: hidden;
+  }
+}
+
+/* Matchups form: selects/buttons go full-width on narrow screens */
+@media (max-width: 650px) {
+  #matchups #matchups_form_root select {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  #matchups .matchups_submit {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
+/* Tables + matchups tables: reduce forced minimum width a bit */
+@media (max-width: 650px) {
+  .key_table {
+    min-width: 560px;
+  }
+
+  .key_table th:nth-child(2),
+  .key_table td:nth-child(2) {
+    white-space: normal;
+  }
+
+  #matchups table.matchup_table {
+    min-width: 560px;
+  }
+}
+
+/* Plotly: clamp injected widths so charts don't blow out the page */
+@media (max-width: 650px) {
+  .player_page .js-plotly-plot,
+  .player_page .plotly-graph-div {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
