@@ -10,7 +10,7 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-    <div class="updated_blurb">Updated: 03/04/26 02:10pm CST</div>
+    <div class="updated_blurb">Updated: 03/04/26 03:24pm CST</div>
       <div class="search_wrap">
         <div class="search_row">
           <input id="player_search" class="search_box" type="text" placeholder="Search for a player!" />
@@ -31,6 +31,41 @@
   <a class="toc_link meta_link" href="#home" data-page="home" data-file="pages/home.html" data-team="" data-role="meta" data-name="home">Home</a>
   <a class="toc_link meta_link" href="#key" data-page="key" data-file="pages/key.html" data-team="" data-role="meta" data-name="key">Key</a>
   <a class="toc_link meta_link" href="#matchups" data-page="matchups" data-file="pages/matchups.html" data-team="" data-role="meta" data-name="matchups">Matchups</a>
+</div>
+<div class="division_block" data-division="al-west">
+  <button class="division_title" type="button" data-division="al-west" aria-expanded="false">    <span class="division_arrow">▸</span>    <span class="division_name">AL West</span>    <span class="division_logos"><img class="division_logo" src="./team_logos/HOU.png" alt="HOU logo" loading="lazy" /></span>  </button>
+  <div class="division_body" data-division="al-west">
+<div class="team_block" data-team="HOU">
+  <button class="team_title" type="button" data-team="HOU" aria-expanded="false">    <span class="team_arrow">▸</span>
+    <span class="team_name" data-team="HOU">HOU Astros</span>
+    <img class="team_logo" src="./team_logos/HOU.png" alt="HOU logo" loading="lazy" />
+  </button>
+  <div class="team_body" data-team="HOU">
+  <div class="role_tabs">
+    <button class="role_tab active" data-team="HOU" data-role="batters">Lineup</button>
+    <button class="role_tab" data-team="HOU" data-role="starters">Rotation</button>
+    <button class="role_tab" data-team="HOU" data-role="bullpen">Bullpen</button>
+  </div>
+  </div>
+  <div class="role_list" data-team="HOU" data-role="batters" >
+    <div class="role_label">Lineup</div>
+    <ul class="player_list">
+    </ul>
+  </div>
+  <div class="role_list" data-team="HOU" data-role="starters" style="display:none">
+    <div class="role_label">Rotation</div>
+    <ul class="player_list">
+      <li class="sub_role_label ">SP</li>
+      <li class="player_li"><a class="toc_link" href="#HOU-starters-luis-garcia-luis garcia" data-page="HOU-starters-luis-garcia-luis garcia" data-file="pages/HOU-starters-luis-garcia-luis_garcia.html" data-team="HOU" data-role="starters" data-name="luis garcia" data-tag_kind="" data-is_minors="0" data-is_hurt="0" data-is_susp="0">Luis Garcia</a></li>
+    </ul>
+  </div>
+  <div class="role_list" data-team="HOU" data-role="bullpen" style="display:none">
+    <div class="role_label">Bullpen</div>
+    <ul class="player_list">
+    </ul>
+  </div>
+</div>
+  </div>
 </div>
 <div class="division_block" data-division="al-east">
   <button class="division_title" type="button" data-division="al-east" aria-expanded="false">    <span class="division_arrow">▸</span>    <span class="division_name">AL East</span>    <span class="division_logos"><img class="division_logo" src="./team_logos/BOS.png" alt="BOS logo" loading="lazy" /><img class="division_logo" src="./team_logos/NYY.png" alt="NYY logo" loading="lazy" /></span>  </button>
@@ -97,41 +132,6 @@
 </div>
   </div>
 </div>
-<div class="division_block" data-division="nl-east">
-  <button class="division_title" type="button" data-division="nl-east" aria-expanded="false">    <span class="division_arrow">▸</span>    <span class="division_name">NL East</span>    <span class="division_logos"><img class="division_logo" src="./team_logos/NYM.png" alt="NYM logo" loading="lazy" /></span>  </button>
-  <div class="division_body" data-division="nl-east">
-<div class="team_block" data-team="NYM">
-  <button class="team_title" type="button" data-team="NYM" aria-expanded="false">    <span class="team_arrow">▸</span>
-    <span class="team_name" data-team="NYM">NY Mets</span>
-    <img class="team_logo" src="./team_logos/NYM.png" alt="NYM logo" loading="lazy" />
-  </button>
-  <div class="team_body" data-team="NYM">
-  <div class="role_tabs">
-    <button class="role_tab active" data-team="NYM" data-role="batters">Lineup</button>
-    <button class="role_tab" data-team="NYM" data-role="starters">Rotation</button>
-    <button class="role_tab" data-team="NYM" data-role="bullpen">Bullpen</button>
-  </div>
-  </div>
-  <div class="role_list" data-team="NYM" data-role="batters" >
-    <div class="role_label">Lineup</div>
-    <ul class="player_list">
-    </ul>
-  </div>
-  <div class="role_list" data-team="NYM" data-role="starters" style="display:none">
-    <div class="role_label">Rotation</div>
-    <ul class="player_list">
-      <li class="sub_role_label sub_oos">Out for Season</li>
-      <li class="player_li"><a class="toc_link" href="#NYM-starters-luis-garcia-luis garcia" data-page="NYM-starters-luis-garcia-luis garcia" data-file="pages/NYM-starters-luis-garcia-luis_garcia.html" data-team="NYM" data-role="starters" data-name="luis garcia" data-tag_kind="oos" data-is_minors="0" data-is_hurt="1" data-is_susp="0">Luis Garcia <span class="toc_tag tag_oos">Out for Season</span></a></li>
-    </ul>
-  </div>
-  <div class="role_list" data-team="NYM" data-role="bullpen" style="display:none">
-    <div class="role_label">Bullpen</div>
-    <ul class="player_list">
-    </ul>
-  </div>
-</div>
-  </div>
-</div>
 <div class="division_block" data-division="free-agents">
   <button class="division_title" type="button" data-division="free-agents" aria-expanded="false">    <span class="division_arrow">▸</span>    <span class="division_name">Free Agents</span>      </button>
   <div class="division_body" data-division="free-agents">
@@ -159,8 +159,8 @@
   <div class="role_list" data-team="RP" data-role="bullpen" style="display:none">
     <div class="role_label">Bullpen</div>
     <ul class="player_list">
-      <li class="sub_role_label sub_minors">Minors</li>
-      <li class="player_li"><a class="toc_link" href="#RP-bullpen-luis-garcia-rp-luis garcia rp" data-page="RP-bullpen-luis-garcia-rp-luis garcia rp" data-file="pages/RP-bullpen-luis-garcia-rp-luis_garcia_rp.html" data-team="RP" data-role="bullpen" data-name="luis garcia rp" data-tag_kind="minors" data-is_minors="1" data-is_hurt="0" data-is_susp="0">Luis Garcia RP <span class="toc_tag tag_minors">Minors</span></a></li>
+      <li class="sub_role_label ">RP</li>
+      <li class="player_li"><a class="toc_link" href="#RP-bullpen-luis-garcia-luis garcia rp" data-page="RP-bullpen-luis-garcia-luis garcia rp" data-file="pages/RP-bullpen-luis-garcia-luis_garcia_rp.html" data-team="RP" data-role="bullpen" data-name="luis garcia" data-tag_kind="" data-is_minors="0" data-is_hurt="0" data-is_susp="0">Luis Garcia</a></li>
     </ul>
   </div>
 </div>

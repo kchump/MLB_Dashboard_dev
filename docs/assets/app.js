@@ -969,21 +969,22 @@ function matchup_sort_key(team, opp) {
 
 function sort_projected_rows(rows) {
   return (rows || []).slice().sort((x, y) => {
-    const kx = matchup_sort_key(x.team, x.opp);
-    const ky = matchup_sort_key(y.team, y.opp);
-    if (kx !== ky) return kx < ky ? -1 : 1;
-
-    // Stable tie-breakers
-    const tx = String(x.team || '');
-    const ty = String(y.team || '');
+    const tx = String(x.team || '').trim();
+    const ty = String(y.team || '').trim();
     if (tx !== ty) return tx < ty ? -1 : 1;
 
-    const sx = String(x.side || '');
-    const sy = String(y.side || '');
+    // Keep a consistent ordering within a team
+    // (Away then Home; tweak if you want Home first)
+    const sx = String(x.side || '').trim();
+    const sy = String(y.side || '').trim();
     if (sx !== sy) return sx < sy ? -1 : 1;
 
-    const px = String(x.pitcher || '');
-    const py = String(y.pitcher || '');
+    const ox = String(x.opp || '').trim();
+    const oy = String(y.opp || '').trim();
+    if (ox !== oy) return ox < oy ? -1 : 1;
+
+    const px = String(x.pitcher || '').trim();
+    const py = String(y.pitcher || '').trim();
     if (px !== py) return px < py ? -1 : 1;
 
     return 0;
