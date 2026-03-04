@@ -1391,9 +1391,10 @@ rows.forEach((r, k) => {
   async function build_form() {
     snapshot_multi_state(mode_select.value);
 
-    form_root.innerHTML = '';
-    const prev_year = document.getElementById('matchups_year')?.value || '';
-    clear_results();
+const prev_year = document.getElementById('matchups_year')?.value || '';
+
+form_root.innerHTML = '';
+clear_results();
 
     const idx = await load_matchups_index();
     if (!idx) return;
@@ -1868,12 +1869,17 @@ if (!is_projected) {
         const date_str = to_yyyy_mm_dd_local(projected_date);
 
         // If before Apr 5 (month/day only), use the most recent prior year's fragments
-        const cutoff_mmdd = 405; // Apr 5
-        const use_prior = (mmdd_key_local(projected_date) < cutoff_mmdd);
+const cur_year = (Array.isArray(years) && years.length)
+  ? (years.includes(String(preferred_year)) ? String(preferred_year) : String(years[0]))
+  : String(preferred_year);
 
-        const y = use_prior
-          ? most_recent_prior_year(years, preferred_year)
-          : String(preferred_year);
+// If before Apr 5 (month/day only), use the most recent prior year's fragments
+const cutoff_mmdd = 405; // Apr 5
+const use_prior = (mmdd_key_local(projected_date) < cutoff_mmdd);
+
+const y = use_prior
+  ? most_recent_prior_year(years || [], cur_year)
+  : cur_year;
 
         try {
           const probables = await fetch_probable_pitchers_for_date(date_str);
