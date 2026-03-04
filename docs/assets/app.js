@@ -1433,9 +1433,11 @@ rows.forEach((r, k) => {
     let years = derive_years(idx);
 
     if (lists && Array.isArray(lists.years) && lists.years.length) {
-      years = Array.from(new Set(lists.years.map(y => String(y).trim())))
+      const a = years || [];
+      const b = lists.years.map(y => String(y).trim());
+      years = Array.from(new Set(a.concat(b)))
         .filter(y => /^\d{4}$/.test(y))
-        .sort((a, b) => Number(b) - Number(a));
+        .sort((a2, b2) => Number(b2) - Number(a2));
     }
 
     let hitters = [];
@@ -1846,21 +1848,32 @@ if (!is_projected) {
       day_obj.sel.value = 'Today';
       sync_select_placeholder_class(day_obj.sel);
 
+      function day_offset_from_label(v) {
+        const s = String(v || '').trim();
+        if (s === 'Today') return 0;
+        if (s === 'Tomorrow') return 1;
+        const m = s.match(/^\+(\d+)\s*days?$/i);
+        if (m) return Number(m[1]) || 0;
+        return 0;
+      }
+
       async function submit() {
         clear_results();
 
-if (!preferred_year) return;
+        if (!preferred_year) return;
 
-const projected_date = add_days_local(new Date(), offset);
-const date_str = to_yyyy_mm_dd_local(projected_date);
+        const offset = day_offset_from_label(day_obj.sel.value);
 
-// If before Apr 5 (month/day only), use the most recent prior year's fragments
-const cutoff_mmdd = 405; // Apr 5
-const use_prior = (mmdd_key_local(projected_date) < cutoff_mmdd);
+        const projected_date = add_days_local(new Date(), offset);
+        const date_str = to_yyyy_mm_dd_local(projected_date);
 
-const y = use_prior
-  ? most_recent_prior_year(years, preferred_year)
-  : String(preferred_year);
+        // If before Apr 5 (month/day only), use the most recent prior year's fragments
+        const cutoff_mmdd = 405; // Apr 5
+        const use_prior = (mmdd_key_local(projected_date) < cutoff_mmdd);
+
+        const y = use_prior
+          ? most_recent_prior_year(years, preferred_year)
+          : String(preferred_year);
 
         try {
           const probables = await fetch_probable_pitchers_for_date(date_str);
@@ -1877,11 +1890,30 @@ const y = use_prior
               return [s];
             }
 
-            let path = null;
-            for (const s of side_aliases(p.side)) {
-              path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s, t_key]);
-              if (path) break;
+            function opposite_side(side) {
+              const s = String(side || '').trim();
+              if (s === 'Away') return 'Home';
+              if (s === 'Home') return 'Away';
+              return '';
             }
+
+            let path = null;
+
+            // 1) Try the expected side first
+for (const s2 of side_aliases(p.side)) {
+  path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s2, t_key]);
+  if (path) break;
+}
+
+            // 2) If missing, assume the single existing fragment implies same PF, so try the opposite side
+            if (!path) {
+              const other = opposite_side(p.side);
+for (const s2 of side_aliases(other)) {
+  path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s2, t_key]);
+  if (path) break;
+}
+            }
+
             if (!path) continue;
 
             resolved.push({
@@ -2047,7 +2079,38 @@ const y = use_prior
             const p_key = safe_page_filename(r.p_sel.value);
             const s = r.s_sel.value;
             const t_key = safe_page_filename(r.t_sel.value);
-            return resolve_fragment(idx, y, 'sp_vs_team', [p_key, s, t_key]);
+                        function side_aliases(side) {
+              const ss = String(side || '').trim();
+              if (ss === 'Away') return ['Away', '@'];
+              if (ss === 'Home') return ['Home', 'vs', 'VS'];
+              return [ss];
+            }
+
+            function opposite_side(side) {
+              const ss = String(side || '').trim();
+              if (ss === 'Away') return 'Home';
+              if (ss === 'Home') return 'Away';
+              return '';
+            }
+
+            let path = null;
+
+            // Try expected side first (with aliases)
+            for (const s2 of side_aliases(s)) {
+              path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s2, t_key]);
+              if (path) break;
+            }
+
+            // If missing, assume PF-identical single fragment and try the opposite side
+            if (!path) {
+              const other = opposite_side(s);
+              for (const s2 of side_aliases(other)) {
+                path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s2, t_key]);
+                if (path) break;
+              }
+            }
+
+            return path;
           })
           .filter(Boolean);
 
@@ -2205,7 +2268,37 @@ const y = use_prior
           .map(r => {
             const h_key = safe_page_filename(r.h_sel.value);
             const p_key = safe_page_filename(r.p_sel.value);
-            return resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, r.s_sel.value, p_key]);
+                        function side_aliases(side) {
+              const ss = String(side || '').trim();
+              if (ss === 'Away') return ['Away', '@'];
+              if (ss === 'Home') return ['Home', 'vs', 'VS'];
+              return [ss];
+            }
+
+            function opposite_side(side) {
+              const ss = String(side || '').trim();
+              if (ss === 'Away') return 'Home';
+              if (ss === 'Home') return 'Away';
+              return '';
+            }
+
+            const side = r.s_sel.value;
+            let path = null;
+
+            for (const s2 of side_aliases(side)) {
+              path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, s2, p_key]);
+              if (path) break;
+            }
+
+            if (!path) {
+              const other = opposite_side(side);
+              for (const s2 of side_aliases(other)) {
+                path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, s2, p_key]);
+                if (path) break;
+              }
+            }
+
+            return path;
           })
           .filter(Boolean);
 
@@ -2357,10 +2450,44 @@ const y = use_prior
 
         const p_key = safe_page_filename(p);
 
+        function side_aliases(side) {
+          const ss = String(side || '').trim();
+          if (ss === 'Away') return ['Away', '@'];
+          if (ss === 'Home') return ['Home', 'vs', 'VS'];
+          return [ss];
+        }
+
+        function opposite_side(side) {
+          const ss = String(side || '').trim();
+          if (ss === 'Away') return 'Home';
+          if (ss === 'Home') return 'Away';
+          return '';
+        }
+
+        function resolve_hvp_with_pf_fallback(hitter_name) {
+          const h_key = safe_page_filename(hitter_name);
+          let path = null;
+
+          for (const s2 of side_aliases(s)) {
+            path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, s2, p_key]);
+            if (path) break;
+          }
+
+          if (!path) {
+            const other = opposite_side(s);
+            for (const s2 of side_aliases(other)) {
+              path = resolve_fragment(idx, y, 'hitter_vs_pitcher', [h_key, s2, p_key]);
+              if (path) break;
+            }
+          }
+
+          return path;
+        }
+
         const paths = [
-          resolve_fragment(idx, y, 'hitter_vs_pitcher', [safe_page_filename(b1), s, p_key]),
-          resolve_fragment(idx, y, 'hitter_vs_pitcher', [safe_page_filename(b2), s, p_key]),
-          resolve_fragment(idx, y, 'hitter_vs_pitcher', [safe_page_filename(b3), s, p_key]),
+          resolve_hvp_with_pf_fallback(b1),
+          resolve_hvp_with_pf_fallback(b2),
+          resolve_hvp_with_pf_fallback(b3),
         ];
 
         await render_many(paths, { invert_stats: true });
