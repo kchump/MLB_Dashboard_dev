@@ -34,7 +34,7 @@ function is_visible(el) {
 function ui_name(s) {
   if (s == null) return '';
   const t = String(s).replace(/_/g, ' ').trim();
-  if (t === 'vs') return 'Home';
+  if (t === 'Home') return 'Home';
   return t;
 }
 
@@ -945,14 +945,15 @@ async function fetch_probable_pitchers_for_date(date_str) {
     }
 
     // Home SP is "vs" vs away team
-    if (home_p) {
-      out.push({
-        pitcher: remove_accents(home_p),
-        team: home_team,
-        opp: away_team,
-        side: 'vs',
-      });
-    }
+// Home SP is "Home" vs away team
+if (home_p) {
+  out.push({
+    pitcher: remove_accents(home_p),
+    team: home_team,
+    opp: away_team,
+    side: 'Home',
+  });
+}
   }
 
   return out;
@@ -1052,10 +1053,10 @@ function init_matchups_page_if_present(content_root) {
   mode_select.style.borderRadius = '10px';
 
   const modes = [
-    ['projected_pitchers', 'Projected Pitchers'],
-    ['multi_starter', 'Multiple Starting Pitchers'],
+    ['projected_pitchers', 'Projected Starters'],
+    ['multi_starter', 'Starting Pitchers'],
     ['rp_inning', 'Reliever Inning'],
-    ['multi_hitter', 'Multiple Hitters']
+    ['multi_hitter', 'Hitters']
   ];
 
   modes.forEach(m => {
@@ -1598,7 +1599,7 @@ function init_matchups_page_if_present(content_root) {
     }
 
     function build_side_select(id) {
-      return build_select(id, 'Away/Home', ['Away', 'vs'], 'Select');
+      return build_select(id, 'Away/Home', ['Away', 'Home'], 'Select');
     }
 
     function append_row(row_root, items) {
@@ -1934,7 +1935,7 @@ function init_matchups_page_if_present(content_root) {
 
       home_btn.addEventListener('click', (e) => {
         e.preventDefault();
-        set_all_sides('vs');
+        set_all_sides('Home');
       });
 
       side_toggle.appendChild(away_btn);
@@ -2015,7 +2016,7 @@ function init_matchups_page_if_present(content_root) {
         set_grouped_or_flat(h_sel, year_lists.hitters_by_team, hitters, 'Select hitter');
 
         const { wrap: s_wrap, sel: s_sel } = make_select(`matchups_side_${i}`, 'Away/Home');
-        set_select_options(s_sel, ['Away', 'vs'], 'Select');
+        set_select_options(s_sel, ['Away', 'Home'], 'Select');
 
         const { wrap: p_wrap, sel: p_sel } = make_select(`matchups_pitcher_${i}`, 'Pitcher');
         const pitcher_groups = build_pitcher_groups(year_lists);
@@ -2093,7 +2094,7 @@ function init_matchups_page_if_present(content_root) {
 
       home_btn.addEventListener('click', (e) => {
         e.preventDefault();
-        set_all_sides('vs');
+        set_all_sides('Home');
       });
 
       side_toggle.appendChild(away_btn);
