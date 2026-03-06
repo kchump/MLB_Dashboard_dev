@@ -1727,6 +1727,24 @@ function init_matchups_page_if_present(content_root) {
   sync_row_controls();
 
   //#################################################################### Render helpers ####################################################################
+  function set_matchups_panel_width(mode) {
+    const is_wide_mode = (mode === 'gameday_matchup' || mode === 'best_worst_hitters');
+
+    const panel =
+      content_root.closest('.tab_content, .content_panel, .page_panel, .panel') ||
+      content_root;
+
+    if (!panel) return;
+
+    if (is_wide_mode) {
+      panel.style.maxWidth = '1700px';
+      panel.style.width = 'min(1700px, calc(100vw - 32px))';
+    } else {
+      panel.style.maxWidth = '';
+      panel.style.width = '';
+    }
+  }
+  //#################
   function clear_results() {
     results_root.innerHTML = '';
   }
@@ -2091,31 +2109,44 @@ function init_matchups_page_if_present(content_root) {
 
       fallback_rows.push({
         hitter: hitter_name,
+        all_value: Number.isFinite(fallback.value) ? fallback.value : NaN,
         all_text,
         year: String(fallback.year || '—')
       });
     }
 
+    const sorted_matchup_paths = await sort_paths_by_all(matchup_paths, true);
+
+    fallback_rows.sort((a, b) => {
+      const a_ok = Number.isFinite(a.all_value);
+      const b_ok = Number.isFinite(b.all_value);
+
+      if (a_ok && b_ok) return b.all_value - a.all_value;
+      if (a_ok && !b_ok) return -1;
+      if (!a_ok && b_ok) return 1;
+      return String(a.hitter || '').localeCompare(String(b.hitter || ''));
+    });
+
     const sections = [];
 
-    if (matchup_paths.length) {
+    if (sorted_matchup_paths.length) {
       sections.push({
         title: title_matchup,
-        paths: matchup_paths,
+        paths: sorted_matchup_paths,
         opts: {
-          drop_cols: ['Team', 'Opp', 'Away']
+          drop_cols: ['Team', 'Pitcher', 'Opp', 'Away']
         }
       });
     }
 
     if (fallback_rows.length) {
       sections.push({
-        title: matchup_paths.length ? title_fallback : '',
-        hide_title: !matchup_paths.length,
+        title: sorted_matchup_paths.length ? title_fallback : '',
+        hide_title: !sorted_matchup_paths.length,
         paths: [],
         opts: {
           dummy_rows: fallback_rows.map(r => ({
-            header_cells: ['Hitter', 'All', 'Year'],
+            header_cells: ['Hitter', 'All'],
             row_cells: [r.hitter, r.all_text, r.year]
           }))
         }
@@ -2613,7 +2644,7 @@ function init_matchups_page_if_present(content_root) {
 
     const mode = mode_select.value;
     form_root.dataset.mode = mode;
-
+    set_matchups_panel_width(mode);
     //#################
     function build_select(id, label_text, options, placeholder) {
       const { wrap, sel } = make_select(id, label_text);
