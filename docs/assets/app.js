@@ -2924,14 +2924,18 @@ function init_matchups_page_if_present(content_root) {
 
         await render_multiple_fragments([
           {
-            title: `${home_pitcher || 'TBD'} vs ${away_team}`,
+            title: '',
+            hide_title: true,
             logo_team: home_team,
-            paths: home_sp ? [home_sp] : []
+            paths: home_sp ? [home_sp] : [],
+            opts: { drop_cols: ['Team', 'Opp'] }
           },
           {
-            title: `${away_pitcher || 'TBD'} vs ${home_team}`,
+            title: '',
+            hide_title: true,
             logo_team: away_team,
-            paths: away_sp ? [away_sp] : []
+            paths: away_sp ? [away_sp] : [],
+            opts: { drop_cols: ['Team', 'Opp'] }
           },
           {
             title: `${home_team} hitters vs ${away_pitcher || 'TBD'}`,
