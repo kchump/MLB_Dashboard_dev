@@ -465,6 +465,16 @@ html, body {
   min-width: 720px;
 }
 
+#matchups table.matchup_table.compact_matchup_table {
+  width: auto;
+  min-width: 0;
+}
+
+#matchups table.matchup_table.compact_matchup_table th:first-child,
+#matchups table.matchup_table.compact_matchup_table td:first-child {
+  width: 1%;
+}
+
 #matchups table.matchup_table th,
 #matchups table.matchup_table td {
   border: 1px solid var(--border);

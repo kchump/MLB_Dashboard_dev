@@ -1798,6 +1798,7 @@ function init_matchups_page_if_present(content_root) {
     const requested_drop_cols = Array.isArray(options.drop_cols) ? options.drop_cols : [];
     const dummy_rows = Array.isArray(options.dummy_rows) ? options.dummy_rows : [];
     const override_rows = Array.isArray(options.override_rows) ? options.override_rows : [];
+    const compact_table = !!options.compact_table;
 
     const rows = [];
     let header = null;
@@ -1893,9 +1894,18 @@ function init_matchups_page_if_present(content_root) {
 
     const wrap = document.createElement('div');
     wrap.className = 'matchup_table_wrap';
+    if (compact_table) {
+      wrap.style.overflowX = 'hidden';
+    }
 
     const table = document.createElement('table');
     table.className = 'matchup_table';
+    if (compact_table) {
+      table.classList.add('compact_matchup_table');
+      table.style.width = '100%';
+      table.style.minWidth = '0';
+      table.style.tableLayout = 'auto';
+    }
 
     const thead = document.createElement('thead');
     const trh = document.createElement('tr');
@@ -1936,8 +1946,8 @@ function init_matchups_page_if_present(content_root) {
             }
 
             const is_all = String(h || '').trim() === '+All';
-            const worst = is_all ? -40 : -100;
-            const best = is_all ? 40 : 100;
+            const worst = is_all ? -40 : -70;
+            const best = is_all ? 40 : 70;
 
             td.style.background = rgba_from_two_sided_value(v, worst, -5, 10, best);
             td.style.color = 'rgba(20,20,20,0.95)';
@@ -1966,6 +1976,141 @@ function init_matchups_page_if_present(content_root) {
     if (idx_all < 0) return NaN;
 
     return parse_matchup_stat_number(parts.row_cells[idx_all]);
+  }
+  //#################
+  function fallback_pitcher_all_for_name(year_lists_obj, pitcher_name) {
+    const map_obj = (year_lists_obj && year_lists_obj.fallback_pitcher_all && typeof year_lists_obj.fallback_pitcher_all === 'object')
+      ? year_lists_obj.fallback_pitcher_all
+      : {};
+
+    const rec = map_obj[String(pitcher_name || '').trim()];
+    if (!rec || typeof rec !== 'object') return { value: NaN, year: '' };
+
+    const v = Number(rec.all);
+    return {
+      value: Number.isFinite(v) ? v : NaN,
+      year: String(rec.year || '').trim()
+    };
+  }
+  //#################
+  async function build_pitcher_panel_section(year_lists_obj, year_val, pitcher_name, side, opp_team, logo_team, side_text) {
+    const path = pitcher_name ? resolve_sp_vs_team_path(year_val, pitcher_name, side, opp_team) : null;
+
+    if (path) {
+      return {
+        title: '',
+        hide_title: true,
+        logo_team,
+        side_text,
+        paths: [path],
+        opts: {
+          drop_cols: ['Team', 'Opp', 'Away'],
+          compact_table: true
+        }
+      };
+    }
+
+    const fallback = fallback_pitcher_all_for_name(year_lists_obj, pitcher_name);
+    const all_text = Number.isFinite(fallback.value)
+      ? (fallback.value > 0 ? `+${fallback.value}` : String(fallback.value))
+      : '—';
+
+    return {
+      title: '',
+      hide_title: true,
+      logo_team,
+      side_text,
+      paths: [],
+      opts: {
+        compact_table: true,
+        dummy_rows: [{
+          header_cells: ['Pitcher', 'All', 'Year'],
+          row_cells: [
+            String(pitcher_name || 'TBD'),
+            all_text,
+            String(fallback.year || '—')
+          ]
+        }]
+      }
+    };
+  }
+  //#################
+  function fallback_hitter_all_for_name(year_lists_obj, hitter_name) {
+    const map_obj = (year_lists_obj && year_lists_obj.fallback_hitter_all && typeof year_lists_obj.fallback_hitter_all === 'object')
+      ? year_lists_obj.fallback_hitter_all
+      : {};
+
+    const rec = map_obj[String(hitter_name || '').trim()];
+    if (!rec || typeof rec !== 'object') return { value: NaN, year: '' };
+
+    const v = Number(rec.all);
+    return {
+      value: Number.isFinite(v) ? v : NaN,
+      year: String(rec.year || '').trim()
+    };
+  }
+  //#################
+  async function build_lineup_sections(idx_obj, year_lists_obj, year_val, hitters_list, side, pitcher_name, title_matchup, title_fallback) {
+    const matchup_paths = [];
+    const fallback_rows = [];
+
+    for (const hitter_name of (hitters_list || [])) {
+      const path = resolve_hvp_with_pf_fallback(idx_obj, year_val, hitter_name, side, pitcher_name);
+
+      if (path) {
+        matchup_paths.push(path);
+        continue;
+      }
+
+      const fallback = fallback_hitter_all_for_name(year_lists_obj, hitter_name);
+      const all_text = Number.isFinite(fallback.value)
+        ? (fallback.value > 0 ? `+${fallback.value}` : String(fallback.value))
+        : '—';
+
+      fallback_rows.push({
+        hitter: hitter_name,
+        all_text,
+        year: String(fallback.year || '—')
+      });
+    }
+
+    const sections = [];
+
+    if (matchup_paths.length) {
+      sections.push({
+        title: title_matchup,
+        paths: matchup_paths,
+        opts: {
+          drop_cols: ['Team', 'Opp', 'Away']
+        }
+      });
+    }
+
+    if (fallback_rows.length) {
+      sections.push({
+        title: matchup_paths.length ? title_fallback : '',
+        hide_title: !matchup_paths.length,
+        paths: [],
+        opts: {
+          dummy_rows: fallback_rows.map(r => ({
+            header_cells: ['Hitter', 'All', 'Year'],
+            row_cells: [r.hitter, r.all_text, r.year]
+          }))
+        }
+      });
+    }
+
+    return sections;
+  }
+  //#################
+  async function render_section_into(mount, sec) {
+    const prev = results_root;
+    results_root = mount;
+    try {
+      await render_fragments(sec.paths || [], sec.opts || null);
+    } finally {
+      results_root = prev;
+    }
   }
   //#################
   async function sort_paths_by_all(paths, desc) {
@@ -2066,7 +2211,8 @@ function init_matchups_page_if_present(content_root) {
 
     const grid = document.createElement('div');
     grid.style.display = 'grid';
-    grid.style.gridTemplateColumns = (cols === 1) ? '1fr' : `repeat(${cols}, 1fr)`;
+    grid.style.gridTemplateColumns = (cols === 1) ? '1fr' : `repeat(${cols}, minmax(0, 1fr))`;
+    grid.style.alignItems = 'start';
     grid.style.gap = gap;
 
     results_root.appendChild(grid);
@@ -2256,6 +2402,12 @@ function init_matchups_page_if_present(content_root) {
           hitter_team_map: (pack.hitter_team_map && typeof pack.hitter_team_map === 'object') ? pack.hitter_team_map : {},
           pitchers_rp: Array.isArray(pack.pitchers_rp) ? pack.pitchers_rp : [],
           pitchers_sp: Array.isArray(pack.pitchers_sp) ? pack.pitchers_sp : [],
+          fallback_hitter_all: (pack.fallback_hitter_all && typeof pack.fallback_hitter_all === 'object')
+            ? pack.fallback_hitter_all
+            : {},
+          fallback_pitcher_all: (pack.fallback_pitcher_all && typeof pack.fallback_pitcher_all === 'object')
+            ? pack.fallback_pitcher_all
+            : {},
         };
 
         function has_any(x) {
@@ -2424,6 +2576,8 @@ function init_matchups_page_if_present(content_root) {
         pitchers_sp: pitchers,
         pitchers_rp: pitchers,
         hitter_team_map: year_lists.hitter_team_map || {},
+        fallback_hitter_all: year_lists.fallback_hitter_all || {},
+        fallback_pitcher_all: year_lists.fallback_pitcher_all || {},
       };
     }
 
@@ -2969,11 +3123,47 @@ function init_matchups_page_if_present(content_root) {
         const home_hitters = roster_hitters_for_team(roster_pack,home_team);
         const away_hitters = roster_hitters_for_team(roster_pack,away_team);
 
-        const home_sp = home_pitcher ? resolve_sp_vs_team_path(y,home_pitcher,'Home',away_team) : null;
-        const away_sp = away_pitcher ? resolve_sp_vs_team_path(y,away_pitcher,'Away',home_team) : null;
+        const home_pitcher_section = await build_pitcher_panel_section(
+          year_lists,
+          y,
+          home_pitcher,
+          'Home',
+          away_team,
+          home_team,
+          'Home'
+        );
 
-        const home_paths = build_lineup_hvp_paths(idx,y,home_hitters,'Home',away_pitcher);
-        const away_paths = build_lineup_hvp_paths(idx,y,away_hitters,'Away',home_pitcher);
+        const away_pitcher_section = await build_pitcher_panel_section(
+          year_lists,
+          y,
+          away_pitcher,
+          'Away',
+          home_team,
+          away_team,
+          'Away'
+        );
+
+        const home_lineup_sections = await build_lineup_sections(
+          idx,
+          year_lists,
+          y,
+          home_hitters,
+          'Home',
+          away_pitcher,
+          '',
+          'Fallback All'
+        );
+
+        const away_lineup_sections = await build_lineup_sections(
+          idx,
+          year_lists,
+          y,
+          away_hitters,
+          'Away',
+          home_pitcher,
+          '',
+          'Fallback All'
+        );
 
         if(req_id!==gd_req_id) return;
 
@@ -2983,54 +3173,68 @@ function init_matchups_page_if_present(content_root) {
 
         results_root.appendChild(header);
 
-        await render_multiple_fragments([
-          {
-            title: '',
-            hide_title: true,
-            logo_team: home_team,
-            side_text: 'Home',
-            paths: home_sp ? [home_sp] : [],
-            opts: {
-              drop_cols: ['Team', 'Opp', 'Away'],
-              dummy_rows: home_sp ? [] : [make_dummy_matchup_row('pitcher', { pitcher: home_pitcher || 'TBD' })]
-            }
-          },
-          {
-            title: '',
-            hide_title: true,
-            logo_team: away_team,
-            side_text: 'Away',
-            paths: away_sp ? [away_sp] : [],
-            opts: {
-              drop_cols: ['Team', 'Opp', 'Away'],
-              dummy_rows: away_sp ? [] : [make_dummy_matchup_row('pitcher', { pitcher: away_pitcher || 'TBD' })]
-            }
-          },
-          {
-            title: '',
-            hide_title: true,
-            paths: home_paths,
-            opts: {
-              drop_cols: ['Team', 'Opp', 'Away'],
-              dummy_rows: home_paths.length ? [] : home_hitters.map(h => make_dummy_matchup_row('lineup', {
-                hitter: h,
-                pitcher: away_pitcher || 'TBD'
-              }))
-            }
-          },
-          {
-            title: '',
-            hide_title: true,
-            paths: away_paths,
-            opts: {
-              drop_cols: ['Team', 'Opp', 'Away'],
-              dummy_rows: away_paths.length ? [] : away_hitters.map(h => make_dummy_matchup_row('lineup', {
-                hitter: h,
-                pitcher: home_pitcher || 'TBD'
-              }))
-            }
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+        grid.style.alignItems = 'start';
+        grid.style.gap = '10px';
+        results_root.appendChild(grid);
+
+        async function render_gameday_column(pitcher_section, lineup_sections) {
+          const col = document.createElement('div');
+          col.style.display = 'grid';
+          col.style.gap = '10px';
+          grid.appendChild(col);
+
+          if (pitcher_section.logo_team) {
+            const logo_wrap = document.createElement('div');
+            logo_wrap.style.display = 'flex';
+            logo_wrap.style.justifyContent = 'center';
+            logo_wrap.style.alignItems = 'center';
+            logo_wrap.style.margin = '2px 2px 2px 2px';
+            logo_wrap.innerHTML = team_logo_html(pitcher_section.logo_team);
+            col.appendChild(logo_wrap);
           }
-        ]);
+
+          if (pitcher_section.side_text) {
+            const side_div = document.createElement('div');
+            side_div.textContent = pitcher_section.side_text;
+            side_div.style.fontSize = '12px';
+            side_div.style.fontWeight = '800';
+            side_div.style.color = 'rgba(96,103,112,0.95)';
+            side_div.style.margin = '0 2px 2px 2px';
+            side_div.style.textAlign = 'center';
+            col.appendChild(side_div);
+          }
+
+          const pitcher_mount = document.createElement('div');
+          col.appendChild(pitcher_mount);
+          await render_section_into(pitcher_mount, pitcher_section);
+
+          for (const sec of (lineup_sections || [])) {
+            const block = document.createElement('div');
+
+            if (sec.title && !sec.hide_title) {
+              const h = document.createElement('div');
+              h.textContent = sec.title;
+              h.style.fontSize = '12px';
+              h.style.fontWeight = '800';
+              h.style.color = 'rgba(96,103,112,0.95)';
+              h.style.margin = '0 2px 8px 2px';
+              h.style.textAlign = 'center';
+              block.appendChild(h);
+            }
+
+            const mount = document.createElement('div');
+            block.appendChild(mount);
+            col.appendChild(block);
+
+            await render_section_into(mount, sec);
+          }
+        }
+
+        await render_gameday_column(home_pitcher_section, home_lineup_sections);
+        await render_gameday_column(away_pitcher_section, away_lineup_sections);
       }
       //#################
       function clear_mode(){
@@ -3649,18 +3853,18 @@ function init_matchups_page_if_present(content_root) {
   mode_select.addEventListener('change', () => {
     snapshot_multi_state(last_mode_value);
 
-    if (last_mode_value !== mode_select.value) {
-      if (mode_select.value === 'multi_hitter') {
-        multi_form_state.multi_hitter.rows = [];
-        multi_form_state.multi_hitter.n = 1;
-      }
-      if (mode_select.value === 'multi_starter') {
-        multi_form_state.multi_starter.rows = [];
-        multi_form_state.multi_starter.n = 1;
-      }
+    const next_mode = mode_select.value;
+    const last_was_multi = (last_mode_value === 'multi_starter' || last_mode_value === 'multi_hitter');
+    const next_is_multi = (next_mode === 'multi_starter' || next_mode === 'multi_hitter');
+
+    if (last_mode_value !== next_mode && (last_was_multi || next_is_multi)) {
+      multi_form_state.multi_starter.rows = [];
+      multi_form_state.multi_starter.n = 1;
+      multi_form_state.multi_hitter.rows = [];
+      multi_form_state.multi_hitter.n = 1;
     }
 
-    last_mode_value = mode_select.value;
+    last_mode_value = next_mode;
     sync_row_controls();
     build_form();
   });
