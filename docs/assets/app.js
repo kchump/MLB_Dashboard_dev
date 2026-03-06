@@ -2015,8 +2015,8 @@ function init_matchups_page_if_present(content_root) {
     return path;
   }
   //#################
-  async function build_pitcher_panel_section(year_lists_obj, year_val, pitcher_name, side, opp_team, logo_team, side_text) {
-    const path = pitcher_name ? resolve_sp_vs_team_path(idx, year_val, pitcher_name, side, opp_team) : null;
+  async function build_pitcher_panel_section(idx_obj, year_lists_obj, year_val, pitcher_name, side, opp_team, logo_team, side_text) {
+    const path = pitcher_name ? resolve_sp_vs_team_path(idx_obj, year_val, pitcher_name, side, opp_team) : null;
 
     if (path) {
       return {
@@ -3126,6 +3126,7 @@ function init_matchups_page_if_present(content_root) {
           });
 
           const home_pitcher_section = await build_pitcher_panel_section(
+            idx,
             year_lists,
             y,
             home_pitcher,
@@ -3136,6 +3137,7 @@ function init_matchups_page_if_present(content_root) {
           );
 
           const away_pitcher_section = await build_pitcher_panel_section(
+            idx,
             year_lists,
             y,
             away_pitcher,
@@ -3318,7 +3320,7 @@ function init_matchups_page_if_present(content_root) {
         }
 
         const best_worst_drop_cols = [
-          '+FB', '+SI', '+CT', '+SL', '+SW', '+CB', '+CH', '+SP', '+KN'
+          'Away', 'Opp', '+FB', '+SI', '+CT', '+SL', '+SW', '+CB', '+CH', '+SP', '+KN'
         ];
 
         await render_multiple_fragments([
