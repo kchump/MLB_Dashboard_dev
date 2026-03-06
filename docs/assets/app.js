@@ -1058,6 +1058,41 @@ async function load_matchups_rosters() {
   }
 }
 //#################################################################### Select utils ####################################################################
+async function fetch_matchups_for_date(date_str) {
+  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date_str)}&hydrate=probablePitcher`;
+
+  const r = await fetch(url, { cache:'no-store' });
+  if (!r.ok) return [];
+
+  const j = await r.json();
+  const games = (j.dates && j.dates[0] && Array.isArray(j.dates[0].games)) ? j.dates[0].games : [];
+
+  const out = [];
+
+  for (const g of games) {
+
+    const away_id = g?.teams?.away?.team?.id;
+    const home_id = g?.teams?.home?.team?.id;
+
+    const away_team = team_id_to_code[away_id] || '';
+    const home_team = team_id_to_code[home_id] || '';
+
+    if (!away_team || !home_team) continue;
+
+    const away_p = remove_accents(g?.teams?.away?.probablePitcher?.fullName || '');
+    const home_p = remove_accents(g?.teams?.home?.probablePitcher?.fullName || '');
+
+    out.push({
+      home_team,
+      away_team,
+      home_pitcher: home_p,
+      away_pitcher: away_p
+    });
+  }
+
+  return out;
+}
+//#################
 function team_logo_html(team) {
   const t = String(team || '').trim().toUpperCase();
   if (!t) return '';
@@ -1545,7 +1580,7 @@ function init_matchups_page_if_present(content_root) {
 
   const mode_root = content_root.querySelector('#matchups_mode_root');
   const form_root = content_root.querySelector('#matchups_form_root');
-  const results_root = content_root.querySelector('#matchups_results_root');
+  let results_root = content_root.querySelector('#matchups_results_root');
   if (!mode_root || !form_root || !results_root) return;
 
   if (form_root.dataset.inited === '1') return;
@@ -1967,14 +2002,6 @@ function init_matchups_page_if_present(content_root) {
   //#################
   function build_slate_hvp_paths(idx, y, games, roster_pack) {
     const paths = [];
-    function roster_hitters_for_team(team_code) {
-      if (!roster_pack) return [];
-      const arr = roster_pack[String(team_code || '').trim()];
-
-      return Array.isArray(arr)
-        ? arr.map(x => String(x || '').trim()).filter(Boolean)
-        : [];
-    }
 
     for (const g of (games || [])) {
       const home_team = g.home_team;
@@ -1983,8 +2010,8 @@ function init_matchups_page_if_present(content_root) {
       const home_pitcher = g.home_pitcher;
       const away_pitcher = g.away_pitcher;
 
-      const home_hitters = roster_hitters_for_team(home_team);
-      const away_hitters = roster_hitters_for_team(away_team);
+      const home_hitters = roster_hitters_for_team(roster_pack, home_team);
+      const away_hitters = roster_hitters_for_team(roster_pack, away_team);
 
       if (home_pitcher) {
         paths.push(
@@ -2215,6 +2242,16 @@ function init_matchups_page_if_present(content_root) {
             year_lists.pitchers_sp = pitchers;
           }
 
+          const sidebar_lists = build_sidebar_lists();
+
+          if (!has_any(year_lists.pitchers_rp_by_team) && has_any(sidebar_lists.pitchers_rp_by_team)) {
+            year_lists.pitchers_rp_by_team = sidebar_lists.pitchers_rp_by_team;
+          }
+
+          if (!has_any(year_lists.pitchers_rp) && has_any(sidebar_lists.pitchers_rp)) {
+            year_lists.pitchers_rp = sidebar_lists.pitchers_rp;
+          }
+
           if (!has_any(hitters) && has_any(year_lists.hitters_by_team)) {
             const s = new Set();
             year_lists.hitters_by_team.forEach(g => (g.options || []).forEach(n => s.add(n)));
@@ -2353,7 +2390,6 @@ function init_matchups_page_if_present(content_root) {
     refresh_lists_from_year(initial_year);
 
     const mode = mode_select.value;
-    const is_projected = (mode === 'projected_pitchers');
 
     //#################
     function build_select(id, label_text, options, placeholder) {
@@ -2399,23 +2435,23 @@ function init_matchups_page_if_present(content_root) {
       year_sel = { value: selected_year_value() };
       refresh_lists_from_year(year_sel.value);
     }
+    //#################
+    function append_projected_starters_disclaimer() {
+      const cutoff_mmdd = 410;
 
-    if (!is_projected) {
-      const year_obj = make_select('matchups_year', 'Year');
-      set_select_options(year_obj.sel, years, 'Select year');
-      form_root.appendChild(year_obj.wrap);
+      const disclaimer = document.createElement('div');
+      disclaimer.className = 'matchups_projected_disclaimer';
+      disclaimer.textContent = 'Projected starters only; using probable pitchers and current projected lineups';
+      disclaimer.style.fontSize = '12px';
+      disclaimer.style.fontWeight = '600';
+      disclaimer.style.color = 'rgba(209, 83, 49, 0.95)';
+      disclaimer.style.margin = '6px 0 10px 0';
+      disclaimer.style.display = (mmdd_key_local(new Date()) < cutoff_mmdd) ? '' : 'none';
 
-      year_obj.sel.value = String(prev_year || preferred_year || (years[0] || '')).trim();
-      sync_select_placeholder_class(year_obj.sel);
-
-      year_obj.sel.addEventListener('change', () => {
-        refresh_lists_from_year(year_obj.sel.value);
-        clear_results();
-        build_form();
-      });
-
-      year_sel = year_obj.sel;
+      form_root.appendChild(disclaimer);
     }
+
+    append_projected_starters_disclaimer();
     //#################
     function append_row(row_root, items) {
       const row_div = document.createElement('div');
@@ -2636,6 +2672,49 @@ function init_matchups_page_if_present(content_root) {
     async function render_many(paths, opts) {
       await render_fragments(paths.filter(Boolean), opts);
     }
+    //#################
+    function resolve_sp_vs_team_path(y,pitcher,side,opp){
+      const p_key = safe_page_filename(pitcher);
+      const t_key = safe_page_filename(opp);
+
+      let path=null;
+
+      for(const s2 of side_aliases(side)){
+        path = resolve_fragment(idx,y,'sp_vs_team',[p_key,s2,t_key]);
+        if(path) break;
+      }
+
+      if(!path){
+        const other = opposite_side(side);
+        for(const s2 of side_aliases(other)){
+          path = resolve_fragment(idx,y,'sp_vs_team',[p_key,s2,t_key]);
+          if(path) break;
+        }
+      }
+
+      return path;
+    }
+    //#################
+    function prefer_fragment_year() {
+      const y = String(window.DEFAULT_SEASON_YEAR || '').trim();
+      if (y && Array.isArray(years) && years.includes(y)) return y;
+      if (Array.isArray(years) && years.length) return String(years[0]);
+      return y || '';
+    }
+    //#################
+    function roster_pack_for_year(rosters_obj, y) {
+      if (!rosters_obj || typeof rosters_obj !== 'object') return null;
+      const by_year = rosters_obj.by_year || null;
+      if (!by_year) return null;
+      const pack = by_year[String(y)];
+      return (pack && typeof pack === 'object') ? pack : null;
+    }
+
+    function roster_hitters_for_team(roster_pack, team_code) {
+      if (!roster_pack) return [];
+      const arr = roster_pack[String(team_code || '').trim()];
+      return Array.isArray(arr) ? arr.map(x => String(x || '').trim()).filter(Boolean) : [];
+    }
     //#################################################################### Mode: projected_pitchers ####################################################################
     if (mode === 'projected_pitchers') {
       const day_obj = make_select('matchups_proj_day', 'Day');
@@ -2670,7 +2749,6 @@ function init_matchups_page_if_present(content_root) {
 
         const projected_date = add_days_local(new Date(), offset);
         const date_str = to_yyyy_mm_dd_local(projected_date);
-        update_disclaimer_for_date();
 
         const cur_year = (Array.isArray(years) && years.length)
           ? (years.includes(String(preferred_year)) ? String(preferred_year) : String(years[0]))
@@ -2741,32 +2819,10 @@ function init_matchups_page_if_present(content_root) {
       function clear_mode() {
         clear_results();
         day_obj.sel.value = 'Today';
-        update_disclaimer_for_date();
         sync_select_placeholder_class(day_obj.sel);
       }
 
-      const btns = build_action_buttons(submit, clear_mode, 'Load');
-
-      const cutoff_mmdd = 410; // Apr 10
-
-      const disclaimer = document.createElement('div');
-      disclaimer.id = 'matchups_proj_disclaimer';
-      disclaimer.textContent = 'Using 2025 season data until enough PA/IP are accrued';
-      disclaimer.style.fontSize = '12px';
-      disclaimer.style.fontWeight = '600';
-      disclaimer.style.color = 'rgba(209, 83, 49, 0.95)';
-      disclaimer.style.marginLeft = '10px';
-      disclaimer.style.display = 'none';
-
-      btns.wrap.appendChild(disclaimer);
-      //#################
-      function update_disclaimer_for_date() {
-        const el = document.getElementById('matchups_proj_disclaimer');
-        if (!el) return;
-        el.style.display = (mmdd_key_local(new Date()) < cutoff_mmdd) ? '' : 'none';
-      }
-
-      update_disclaimer_for_date();
+      build_action_buttons(submit, clear_mode, 'Load');
 
       return;
     }
@@ -2784,95 +2840,6 @@ function init_matchups_page_if_present(content_root) {
       sync_select_placeholder_class(day_obj.sel);
 
       let gd_req_id = 0;
-      //#################
-      function day_offset_from_label(v) {
-        const s = String(v || '').trim();
-        if (s === 'Today') return 0;
-        if (s === 'Tomorrow') return 1;
-
-        const m = s.match(/^\+(\d+)\s*days?$/i);
-        if (m) return Number(m[1]) || 0;
-
-        return 0;
-      }
-      //#################
-      function prefer_fragment_year() {
-        const y = String(window.DEFAULT_SEASON_YEAR || '').trim();
-        if (y && Array.isArray(years) && years.includes(y)) return y;
-        if (Array.isArray(years) && years.length) return String(years[0]);
-        return y || '';
-      }
-      //#################
-      function roster_pack_for_year(rosters_obj, y) {
-        if (!rosters_obj || typeof rosters_obj !== 'object') return null;
-        const by_year = rosters_obj.by_year || null;
-        if (!by_year) return null;
-        const pack = by_year[String(y)];
-        return (pack && typeof pack === 'object') ? pack : null;
-      }
-
-      function roster_hitters_for_team(roster_pack, team_code) {
-        if (!roster_pack) return [];
-        const arr = roster_pack[String(team_code || '').trim()];
-        return Array.isArray(arr) ? arr.map(x => String(x || '').trim()).filter(Boolean) : [];
-      }
-      //#################
-      async function fetch_matchups_for_date(date_str) {
-        const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date_str)}&hydrate=probablePitcher`;
-
-        const r = await fetch(url, { cache:'no-store' });
-        if (!r.ok) return [];
-
-        const j = await r.json();
-        const games = (j.dates && j.dates[0] && Array.isArray(j.dates[0].games)) ? j.dates[0].games : [];
-
-        const out = [];
-
-        for (const g of games) {
-
-          const away_id = g?.teams?.away?.team?.id;
-          const home_id = g?.teams?.home?.team?.id;
-
-          const away_team = team_id_to_code[away_id] || '';
-          const home_team = team_id_to_code[home_id] || '';
-
-          if (!away_team || !home_team) continue;
-
-          const away_p = remove_accents(g?.teams?.away?.probablePitcher?.fullName || '');
-          const home_p = remove_accents(g?.teams?.home?.probablePitcher?.fullName || '');
-
-          out.push({
-            home_team,
-            away_team,
-            home_pitcher: home_p,
-            away_pitcher: away_p
-          });
-        }
-
-        return out;
-      }
-      //#################
-      function resolve_sp_vs_team_path(y,pitcher,side,opp){
-        const p_key = safe_page_filename(pitcher);
-        const t_key = safe_page_filename(opp);
-
-        let path=null;
-
-        for(const s2 of side_aliases(side)){
-          path = resolve_fragment(idx,y,'sp_vs_team',[p_key,s2,t_key]);
-          if(path) break;
-        }
-
-        if(!path){
-          const other = opposite_side(side);
-          for(const s2 of side_aliases(other)){
-            path = resolve_fragment(idx,y,'sp_vs_team',[p_key,s2,t_key]);
-            if(path) break;
-          }
-        }
-
-        return path;
-      }
       //#################
       async function refresh_team_choices(){
         const offset = day_offset_from_label(day_obj.sel.value);
@@ -2952,10 +2919,26 @@ function init_matchups_page_if_present(content_root) {
         results_root.appendChild(header);
 
         await render_multiple_fragments([
-          {title:`${home_pitcher||'TBD'} vs ${away_team}`, logo_team: home_team, paths: home_sp ? [home_sp] : []},
-          {title:`${away_pitcher||'TBD'} vs ${home_team}`, logo_team: away_team, paths: away_sp ? [away_sp] : []},
-          {title:`${home_team} lineup`,paths:home_paths},
-          {title:`${away_team} lineup`,paths:away_paths}
+          {
+            title: `${home_pitcher || 'TBD'} vs ${away_team}`,
+            logo_team: home_team,
+            paths: home_sp ? [home_sp] : []
+          },
+          {
+            title: `${away_pitcher || 'TBD'} vs ${home_team}`,
+            logo_team: away_team,
+            paths: away_sp ? [away_sp] : []
+          },
+          {
+            title: `${home_team} hitters vs ${away_pitcher || 'TBD'}`,
+            logo_team: home_team,
+            paths: home_paths
+          },
+          {
+            title: `${away_team} hitters vs ${home_pitcher || 'TBD'}`,
+            logo_team: away_team,
+            paths: away_paths
+          }
         ]);
       }
       //#################
@@ -2981,24 +2964,8 @@ function init_matchups_page_if_present(content_root) {
       sync_select_placeholder_class(day_obj.sel);
 
       let bw_req_id=0;
-
-      function day_offset_from_label(v){
-        const s=String(v||'').trim();
-        if(s==='Today')return 0;
-        if(s==='Tomorrow')return 1;
-        const m=s.match(/^\+(\d+)/);
-        return m?Number(m[1]):0;
-      }
-
-      function prefer_fragment_year(){
-        const y=String(window.DEFAULT_SEASON_YEAR||'').trim();
-        if(y&&years.includes(y))return y;
-        if(years.length)return years[0];
-        return y||'';
-      }
-
+      //#################
       async function submit(){
-
         const req_id=++bw_req_id;
         clear_results();
 
@@ -3039,7 +3006,7 @@ function init_matchups_page_if_present(content_root) {
           {title:'Bottom 20 Hitters',paths:bottom20}
         ]);
       }
-
+      //#################
       function clear_mode(){
         clear_results();
         day_obj.sel.value='Today';
@@ -3516,7 +3483,7 @@ function init_matchups_page_if_present(content_root) {
 
         const p_key = safe_page_filename(p);
 
-        function resolve_hvp_with_pf_fallback(hitter_name) { //todo overwrites function
+        function resolve_rp_hvp_path(hitter_name) { //todo overwrites function
           const h_key = safe_page_filename(hitter_name);
           let path = null;
 
@@ -3537,9 +3504,9 @@ function init_matchups_page_if_present(content_root) {
         }
 
         const paths = [
-          resolve_hvp_with_pf_fallback(b1),
-          resolve_hvp_with_pf_fallback(b2),
-          resolve_hvp_with_pf_fallback(b3),
+          resolve_rp_hvp_path(b1),
+          resolve_rp_hvp_path(b2),
+          resolve_rp_hvp_path(b3),
         ];
 
         await render_many(paths, { invert_stats: true });
