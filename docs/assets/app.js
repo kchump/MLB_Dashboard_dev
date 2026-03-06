@@ -1793,8 +1793,11 @@ function init_matchups_page_if_present(content_root) {
   async function render_fragments(paths, opts) {
     clear_results();
 
-    const options = (opts && typeof opts === "object") ? opts : {};
+    const options = (opts && typeof opts === 'object') ? opts : {};
     const invert_stats = !!options.invert_stats;
+    const requested_drop_cols = Array.isArray(options.drop_cols) ? options.drop_cols : [];
+    const dummy_rows = Array.isArray(options.dummy_rows) ? options.dummy_rows : [];
+    const override_rows = Array.isArray(options.override_rows) ? options.override_rows : [];
 
     const rows = [];
     let header = null;
@@ -1812,10 +1815,17 @@ function init_matchups_page_if_present(content_root) {
       if (parts.row_cells.length) rows.push(parts.row_cells);
     }
 
+    if ((!header || !rows.length) && dummy_rows.length) {
+      header = Array.isArray(dummy_rows[0]?.header_cells) ? dummy_rows[0].header_cells.slice() : [];
+      dummy_rows.forEach(x => {
+        if (Array.isArray(x?.row_cells)) rows.push(x.row_cells.slice());
+      });
+    }
+
     if (!header || !rows.length) return;
 
     // Remove Park / ParkFactor columns and hide empty pitch columns
-    const drop_cols = new Set(['Park', 'ParkFactor']);
+    const drop_cols = new Set(['Park', 'ParkFactor', ...requested_drop_cols]);
 
     const pitch_cols = new Set([
       '+FB', '+SI', '+CT', '+SL', '+SW', '+CB', '+CH', '+SP', '+KN'
@@ -1852,6 +1862,19 @@ function init_matchups_page_if_present(content_root) {
     rows.forEach((r, k) => {
       rows[k] = keep_idx.map(i => r[i]);
     });
+
+    if (override_rows.length) {
+      rows.forEach((r, row_idx) => {
+        const override = override_rows[row_idx] || null;
+        if (!override || typeof override !== 'object') return;
+
+        header.forEach((col_name, col_idx) => {
+          if (Object.prototype.hasOwnProperty.call(override, col_name)) {
+            r[col_idx] = override[col_name];
+          }
+        });
+      });
+    }
 
     function decimals_in_raw(raw) {
       const s = String(raw || '').trim();
@@ -1988,6 +2011,12 @@ function init_matchups_page_if_present(content_root) {
     return path;
   }
   //#################
+  function roster_hitters_for_team(roster_pack, team_code) {
+    if (!roster_pack) return [];
+    const arr = roster_pack[String(team_code || '').trim()];
+    return Array.isArray(arr) ? arr.map(x => String(x || '').trim()).filter(Boolean) : [];
+  }
+  //#################
   function build_lineup_hvp_paths(idx, y, hitters_list, side, pitcher) {
     const paths = [];
     for (const h of (hitters_list || [])) {
@@ -2046,6 +2075,8 @@ function init_matchups_page_if_present(content_root) {
 
     for (const sec of (sections || [])) {
       const title = (sec && sec.title != null) ? String(sec.title) : '';
+      const hide_title = !!(sec && sec.hide_title);
+      const side_text = (sec && sec.side_text != null) ? String(sec.side_text) : '';
       const paths = (sec && Array.isArray(sec.paths)) ? sec.paths : [];
       const opts = (sec && sec.opts && typeof sec.opts === 'object') ? sec.opts : null;
       const logo_team = (sec && sec.logo_team != null) ? String(sec.logo_team) : '';
@@ -2063,7 +2094,18 @@ function init_matchups_page_if_present(content_root) {
         cell.appendChild(logo_wrap);
       }
 
-      if (title) {
+      if (side_text) {
+        const side_div = document.createElement('div');
+        side_div.textContent = side_text;
+        side_div.style.fontSize = '12px';
+        side_div.style.fontWeight = '800';
+        side_div.style.color = 'rgba(96,103,112,0.95)';
+        side_div.style.margin = '0 2px 8px 2px';
+        side_div.style.textAlign = 'center';
+        cell.appendChild(side_div);
+      }
+
+      if (title && !hide_title) {
         const h = document.createElement('div');
         h.textContent = title;
         h.style.fontSize = '12px';
@@ -2690,6 +2732,31 @@ function init_matchups_page_if_present(content_root) {
       return 0;
     }
     //#################
+    function make_dummy_matchup_row(kind, vals) {
+      if (kind === 'pitcher') {
+        return {
+          header_cells: ['Pitcher', '+All'],
+          row_cells: [
+            String(vals.pitcher || ''),
+            '—'
+          ]
+        };
+      }
+
+      if (kind === 'lineup') {
+        return {
+          header_cells: ['Hitter', 'Pitcher', '+All'],
+          row_cells: [
+            String(vals.hitter || ''),
+            String(vals.pitcher || ''),
+            '—'
+          ]
+        };
+      }
+
+      return null;
+    }
+    //#################
     function resolve_sp_vs_team_path(y,pitcher,side,opp){
       const p_key = safe_page_filename(pitcher);
       const t_key = safe_page_filename(opp);
@@ -2725,12 +2792,6 @@ function init_matchups_page_if_present(content_root) {
       if (!by_year) return null;
       const pack = by_year[String(y)];
       return (pack && typeof pack === 'object') ? pack : null;
-    }
-
-    function roster_hitters_for_team(roster_pack, team_code) {
-      if (!roster_pack) return [];
-      const arr = roster_pack[String(team_code || '').trim()];
-      return Array.isArray(arr) ? arr.map(x => String(x || '').trim()).filter(Boolean) : [];
     }
     //#################################################################### Mode: projected_pitchers ####################################################################
     if (mode === 'projected_pitchers') {
@@ -2927,25 +2988,47 @@ function init_matchups_page_if_present(content_root) {
             title: '',
             hide_title: true,
             logo_team: home_team,
+            side_text: 'Home',
             paths: home_sp ? [home_sp] : [],
-            opts: { drop_cols: ['Team', 'Opp'] }
+            opts: {
+              drop_cols: ['Team', 'Opp', 'Away'],
+              dummy_rows: home_sp ? [] : [make_dummy_matchup_row('pitcher', { pitcher: home_pitcher || 'TBD' })]
+            }
           },
           {
             title: '',
             hide_title: true,
             logo_team: away_team,
+            side_text: 'Away',
             paths: away_sp ? [away_sp] : [],
-            opts: { drop_cols: ['Team', 'Opp'] }
+            opts: {
+              drop_cols: ['Team', 'Opp', 'Away'],
+              dummy_rows: away_sp ? [] : [make_dummy_matchup_row('pitcher', { pitcher: away_pitcher || 'TBD' })]
+            }
           },
           {
-            title: `${home_team} hitters vs ${away_pitcher || 'TBD'}`,
-            logo_team: home_team,
-            paths: home_paths
+            title: '',
+            hide_title: true,
+            paths: home_paths,
+            opts: {
+              drop_cols: ['Team', 'Opp', 'Away'],
+              dummy_rows: home_paths.length ? [] : home_hitters.map(h => make_dummy_matchup_row('lineup', {
+                hitter: h,
+                pitcher: away_pitcher || 'TBD'
+              }))
+            }
           },
           {
-            title: `${away_team} hitters vs ${home_pitcher || 'TBD'}`,
-            logo_team: away_team,
-            paths: away_paths
+            title: '',
+            hide_title: true,
+            paths: away_paths,
+            opts: {
+              drop_cols: ['Team', 'Opp', 'Away'],
+              dummy_rows: away_paths.length ? [] : away_hitters.map(h => make_dummy_matchup_row('lineup', {
+                hitter: h,
+                pitcher: home_pitcher || 'TBD'
+              }))
+            }
           }
         ]);
       }
@@ -3140,7 +3223,7 @@ function init_matchups_page_if_present(content_root) {
         const y = year_sel.value;
         if (!y) return;
 
-        const paths = rows
+        const resolved_rows = rows
           .filter(r => r.p_sel.value && r.s_sel.value && r.t_sel.value)
           .map(r => {
             const p_key = safe_page_filename(r.p_sel.value);
@@ -3149,13 +3232,11 @@ function init_matchups_page_if_present(content_root) {
 
             let path = null;
 
-            // Try expected side first (with aliases)
             for (const s2 of side_aliases(s)) {
               path = resolve_fragment(idx, y, 'sp_vs_team', [p_key, s2, t_key]);
               if (path) break;
             }
 
-            // If missing, assume PF-identical single fragment and try the opposite side
             if (!path) {
               const other = opposite_side(s);
               for (const s2 of side_aliases(other)) {
@@ -3164,19 +3245,25 @@ function init_matchups_page_if_present(content_root) {
               }
             }
 
-            return path;
+            return {
+              path,
+              requested_side: s
+            };
           })
-          .filter(Boolean);
+          .filter(x => x.path);
 
         const seen = new Set();
         const uniq = [];
-        for (const p of paths) {
-          if (seen.has(p)) continue;
-          seen.add(p);
-          uniq.push(p);
+        const override_rows = [];
+
+        for (const x of resolved_rows) {
+          if (seen.has(x.path)) continue;
+          seen.add(x.path);
+          uniq.push(x.path);
+          override_rows.push({ Away: x.requested_side });
         }
 
-        await render_many(uniq);
+        await render_many(uniq, { override_rows });
       }
       //#################
       function clear_mode() {
@@ -3319,7 +3406,7 @@ function init_matchups_page_if_present(content_root) {
         const y = year_sel.value;
         if (!y) return;
 
-        const paths = rows
+        const resolved_rows = rows
           .filter(r => r.h_sel.value && r.s_sel.value && r.p_sel.value)
           .map(r => {
             const h_key = safe_page_filename(r.h_sel.value);
@@ -3341,19 +3428,25 @@ function init_matchups_page_if_present(content_root) {
               }
             }
 
-            return path;
+            return {
+              path,
+              requested_side: side
+            };
           })
-          .filter(Boolean);
+          .filter(x => x.path);
 
         const seen = new Set();
         const uniq = [];
-        for (const p of paths) {
-          if (seen.has(p)) continue;
-          seen.add(p);
-          uniq.push(p);
+        const override_rows = [];
+
+        for (const x of resolved_rows) {
+          if (seen.has(x.path)) continue;
+          seen.add(x.path);
+          uniq.push(x.path);
+          override_rows.push({ Away: x.requested_side });
         }
 
-        await render_many(uniq);
+        await render_many(uniq, { override_rows });
       }
 
       //#################
@@ -3515,13 +3608,16 @@ function init_matchups_page_if_present(content_root) {
           return path;
         }
 
-        const paths = [
-          resolve_rp_hvp_path(b1),
-          resolve_rp_hvp_path(b2),
-          resolve_rp_hvp_path(b3),
-        ];
+        const resolved_rows = [
+          { hitter: b1, path: resolve_rp_hvp_path(b1), requested_side: s },
+          { hitter: b2, path: resolve_rp_hvp_path(b2), requested_side: s },
+          { hitter: b3, path: resolve_rp_hvp_path(b3), requested_side: s },
+        ].filter(x => x.path);
 
-        await render_many(paths, { invert_stats: true });
+        const paths = resolved_rows.map(x => x.path);
+        const override_rows = resolved_rows.map(x => ({ Away: x.requested_side }));
+
+        await render_many(paths, { invert_stats: true, override_rows });
       }
       //#################
       function clear_mode() {
@@ -3548,8 +3644,23 @@ function init_matchups_page_if_present(content_root) {
     }
   }
   //#################################################################### Wiring ####################################################################
+  let last_mode_value = mode_select.value;
+
   mode_select.addEventListener('change', () => {
-    snapshot_multi_state(mode_select.value);
+    snapshot_multi_state(last_mode_value);
+
+    if (last_mode_value !== mode_select.value) {
+      if (mode_select.value === 'multi_hitter') {
+        multi_form_state.multi_hitter.rows = [];
+        multi_form_state.multi_hitter.n = 1;
+      }
+      if (mode_select.value === 'multi_starter') {
+        multi_form_state.multi_starter.rows = [];
+        multi_form_state.multi_starter.n = 1;
+      }
+    }
+
+    last_mode_value = mode_select.value;
     sync_row_controls();
     build_form();
   });
