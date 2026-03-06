@@ -11,7 +11,7 @@ if (!(Test-Path $target_docs)) {
 # /MIR mirrors (copy + delete extras)
 # /MT uses multithreading (adjust threads if you want)
 # /R and /W keep retries from stalling forever
-robocopy "$source_docs" "$target_docs" /MIR /MT:16 /R:2 /W:1 /NFL /NDL /NP
+robocopy "$source_docs" "$target_docs" /MIR /MT:16 /R:2 /W:1 /NFL /NDL /NP /XF CNAME.txt
 
 # robocopy returns "weird" success codes; treat < 8 as success
 if ($LASTEXITCODE -ge 8) { throw "Robocopy failed with exit code $LASTEXITCODE" }
