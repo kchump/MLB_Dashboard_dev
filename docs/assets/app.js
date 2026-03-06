@@ -2281,7 +2281,12 @@ function init_matchups_page_if_present(content_root) {
   }
   //#################################################################### Form builder ####################################################################
   async function build_form() {
-    snapshot_multi_state(mode_select.value);
+    const current_mode = mode_select.value;
+    const built_mode = String(form_root.dataset.mode || '').trim();
+
+    if (built_mode && built_mode === current_mode) {
+      snapshot_multi_state(current_mode);
+    }
 
     const prev_year = document.getElementById('matchups_year')?.value || '';
 
@@ -2585,6 +2590,7 @@ function init_matchups_page_if_present(content_root) {
     refresh_lists_from_year(initial_year);
 
     const mode = mode_select.value;
+    form_root.dataset.mode = mode;
 
     //#################
     function build_select(id, label_text, options, placeholder) {
@@ -3022,7 +3028,7 @@ function init_matchups_page_if_present(content_root) {
           }
 
           if (!paths.length) {
-            results_root.innerHTML = `<div style='padding:10px;color:rgba(96,103,112,0.95);'>No matchup fragments found for ${date_str}.</div>`;
+            results_root.innerHTML = `<div style='padding:10px;color:rgba(96,103,112,0.95);'>No matchups found for ${date_str}.</div>`;
             return;
           }
 
