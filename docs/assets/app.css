@@ -652,11 +652,11 @@ background: linear-gradient(
 }
 
 #matchups.player_page {
-  max-width: 1700px;
+  max-width: 2000px;
 }
 
 #matchups .static_page {
-  max-width: 1700px;
+  max-width: 2000px;
 }
 
 .static_page h3 {

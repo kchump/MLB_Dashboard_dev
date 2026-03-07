@@ -3209,7 +3209,7 @@ function init_matchups_page_if_present(content_root) {
             'Home',
             away_pitcher,
             '',
-            'Fallback All'
+            'No Matchup Data'
           );
 
           const away_lineup_sections = await build_lineup_sections(
@@ -3220,7 +3220,7 @@ function init_matchups_page_if_present(content_root) {
             'Away',
             home_pitcher,
             '',
-            'Fallback All'
+            'No Matchup Data'
           );
 
           dbg('lineup sections', {
