@@ -3139,7 +3139,7 @@ function fantasy_own_pct_text(value) {
     return '';
   }
 
-  return `Own ${n.toFixed(1).replace(/\.0$/, '')}%`;
+  return `Owned%: ${n.toFixed(1).replace(/\.0$/, '')}%`;
 }
 /* ################# */
 async function fantasy_own_pct_for_person(
@@ -6700,50 +6700,35 @@ async function load_matchup_fragment(path) {
 }
 //#################################################################### Projected pitchers (StatsAPI probables -> sp_vs_team fragments) ####################################################################
 //#################################################################### Fantasy ownership ####################################################################
-function matchup_fantasy_section(data, section_names) {
-  const roots = [
-    data,
-    data?.majors,
-    data?.sections,
-    data?.data,
-    data?.fantasy
-  ].filter(x => x && typeof x === 'object');
+function matchup_fantasy_sections(data, section_names) {
+  const scopes = ['majors', 'minors', 'spring', 'playoffs'];
+  const rows = [];
 
-  for (const root of roots) {
+  scopes.forEach(scope => {
+    const root = data?.[scope];
+    if (!root || typeof root !== 'object') return;
+
     for (const section_name of section_names) {
       const section = root[section_name];
 
       if (Array.isArray(section)) {
-        return section;
+        rows.push(...section);
+        break;
       }
 
       if (section && Array.isArray(section.rows)) {
-        return section.rows;
+        rows.push(...section.rows);
+        break;
       }
 
       if (section && Array.isArray(section.data)) {
-        return section.data;
-      }
-
-      if (section && typeof section === 'object') {
-        return Object.entries(section).map(([name, rec]) => {
-          if (rec && typeof rec === 'object') {
-            return {
-              Name: rec.Name || rec.name || name,
-              ...rec
-            };
-          }
-
-          return {
-            Name: name,
-            'Own%': rec
-          };
-        });
+        rows.push(...section.data);
+        break;
       }
     }
-  }
+  });
 
-  return [];
+  return rows;
 }
 //#################
 function matchup_fantasy_ownership_raw(rec) {
@@ -6791,7 +6776,7 @@ function add_matchup_ownership_rows(target, rows) {
     const own = matchup_fantasy_ownership_raw(rec);
     const key = normalize_matchup_person_key(name);
 
-    if (!key || own == null) return;
+    if (!key || own == null || target.has(key)) return;
 
     target.set(key, own);
   });
@@ -6823,17 +6808,17 @@ async function load_matchups_ownership_lookup(year) {
 
       add_matchup_ownership_rows(
         lookup.hitters,
-        matchup_fantasy_section(data, ['hitters', 'batters'])
+        matchup_fantasy_sections(data, ['hitters', 'batters'])
       );
 
       add_matchup_ownership_rows(
         lookup.starters,
-        matchup_fantasy_section(data, ['sp', 'starters'])
+        matchup_fantasy_sections(data, ['sp', 'starters'])
       );
 
       add_matchup_ownership_rows(
         lookup.relievers,
-        matchup_fantasy_section(data, ['rp', 'relievers'])
+        matchup_fantasy_sections(data, ['rp', 'relievers'])
       );
 
       return lookup;
@@ -13208,6 +13193,38 @@ function fantasy_effective_team(row) {
   return fantasy_clean_team_value(display_team);
 }
 /* ################# */
+function fantasy_row_with_ownership_fallback(row, data) {
+  const out = { ...row };
+
+  if (!fantasy_is_current_year()) {
+    return out;
+  }
+
+  if (fantasy_num(out['Own%']) != null) {
+    return out;
+  }
+
+  const person_key = String(out.person_key || '');
+  if (!person_key) return out;
+
+  const sections = ['hitters', 'sp', 'rp'];
+
+  for (const section of sections) {
+    const fallback_row = (data?.majors?.[section] || []).find(
+      row2 => String(row2.person_key || '') === person_key
+    );
+
+    const ownership = fantasy_num(fallback_row?.['Own%']);
+
+    if (ownership != null) {
+      out['Own%'] = ownership;
+      break;
+    }
+  }
+
+  return out;
+}
+/* ################# */
 function fantasy_row_with_position_fallback(row, data) {
   const out = { ...row };
 
@@ -13297,6 +13314,10 @@ function fantasy_current_rows(data) {
 
   if (fantasy_state.section === 'hitters' && fantasy_state.scope !== 'majors') {
     rows = rows.map(row => fantasy_row_with_position_fallback(row, data));
+  }
+
+  if (fantasy_state.scope !== 'majors') {
+    rows = rows.map(row => fantasy_row_with_ownership_fallback(row, data));
   }
 
   return rows;
