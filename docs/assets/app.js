@@ -6841,10 +6841,13 @@ function matchup_ownership_display(value) {
   if (!raw) return '—';
   if (raw.endsWith('%')) return raw;
 
-  const n = parse_matchup_stat_number(raw);
+  const cleaned = raw.replace(/,/g, '');
+  const match = cleaned.match(/-?(?:\d+(?:\.\d*)?|\.\d+)/);
+  const n = match ? Number(match[0]) : NaN;
+
   if (!Number.isFinite(n)) return raw;
 
-  return `${display_stat(n, 1)}%`;
+  return `${n.toFixed(1).replace(/\.0$/, '')}%`;
 }
 //#################
 function matchup_ownership_player_name(header, row) {
@@ -14656,6 +14659,7 @@ results_root.querySelectorAll('.fantasy_player_link').forEach(el => {
 const fantasy_trends_state = {
   year: null,
   data: null,
+  hide_injured: false,
   filters: {
     free_agents: {
       hitters: 'ALL',
@@ -14670,21 +14674,83 @@ const fantasy_trends_state = {
       pitchers: 'ALL',
     },
   },
+  sorts: {
+    free_agents: {
+      hitters: {
+        key: 'rAll',
+        desc: true,
+      },
+      pitchers: {
+        key: 'rAll',
+        desc: true,
+      },
+    },
+    undervalued: {
+      hitters: {
+        key: 'Own%',
+        desc: false,
+      },
+      pitchers: {
+        key: 'Own%',
+        desc: false,
+      },
+    },
+    overvalued: {
+      hitters: {
+        key: 'Own%',
+        desc: true,
+      },
+      pitchers: {
+        key: 'Own%',
+        desc: true,
+      },
+    },
+  },
 };
 /* ################# */
 const fantasy_trends_hitter_columns = [
-  'name', 'Own%', 'team',
-  'Pts', 'PPG', 'Score', 'All', 'rAll',
-  'PA', 'R', 'HR', 'RBI', 'SB',
-  'AVG', 'OBP', 'SLG', 'OPS',
-  'S PA', 'S PPG', 'S Score', 'S All', 'S OPS',
+  'name',
+  'Own%',
+  'team',
+  'S PA',
+  'S PPG',
+  'S Score',
+  'S All',
+  'S OPS',
+  'Pts',
+  'PPG',
+  'Score',
+  'All',
+  'rAll',
+  'PA',
+  'R',
+  'HR',
+  'RBI',
+  'SB',
+  'AVG',
+  'OBP',
+  'SLG',
+  'OPS',
 ];
 /* ################# */
 const fantasy_trends_pitcher_columns = [
-  'name', 'Own%', 'team',
-  'Pts', 'PPG', 'Score', 'All', 'rAll',
-  'IP', 'BB', 'K', 'ERA', 'WHIP',
-  'S IP', 'S PPG', 'S Score', 'S All',
+  'name',
+  'Own%',
+  'team',
+  'S IP',
+  'S PPG',
+  'S Score',
+  'S All',
+  'Pts',
+  'PPG',
+  'Score',
+  'All',
+  'rAll',
+  'IP',
+  'BB',
+  'K',
+  'ERA',
+  'WHIP',
 ];
 /* ################# */
 function fantasy_trends_num(v) {
@@ -14699,23 +14765,81 @@ function fantasy_trends_num(v) {
     : null;
 }
 /* ################# */
-function fantasy_trends_role(row, section) {
-  if (section === 'hitters') return 'hitters';
+function fantasy_trends_role(
+  row,
+  section
+) {
+  if (section === 'hitters') {
+    return 'hitters';
+  }
 
   const pitch_role = String(
-    row?.pitch_role || ''
+    row?.pitch_role ||
+    row?.role ||
+    ''
   ).trim().toUpperCase();
 
   if (
     pitch_role === 'RP' ||
-    pitch_role === 'CL'
+    pitch_role === 'CL' ||
+    pitch_role === 'BULLPEN'
   ) {
     return 'rp';
   }
 
-  if (section === 'rp') return 'rp';
+  if (section === 'rp') {
+    return 'rp';
+  }
 
   return 'sp';
+}
+/* ################# */
+function fantasy_trends_page_role(
+  section
+) {
+  if (section === 'hitters') {
+    return 'batters';
+  }
+
+  if (section === 'rp') {
+    return 'bullpen';
+  }
+
+  return 'starters';
+}
+/* ################# */
+function fantasy_trends_with_fantasy_state(
+  section,
+  callback
+) {
+  const previous_state = {
+    year: fantasy_state.year,
+    scope: fantasy_state.scope,
+    section: fantasy_state.section,
+    show_gradients: fantasy_state.show_gradients,
+  };
+
+  fantasy_state.year = Number(
+    fantasy_trends_state.year ||
+    window.DEFAULT_SEASON_YEAR ||
+    new Date().getFullYear()
+  );
+
+  fantasy_state.scope = 'majors';
+  fantasy_state.section = section === 'hitters'
+    ? 'hitters'
+    : section;
+
+  fantasy_state.show_gradients = true;
+
+  try {
+    return callback();
+  } finally {
+    fantasy_state.year = previous_state.year;
+    fantasy_state.scope = previous_state.scope;
+    fantasy_state.section = previous_state.section;
+    fantasy_state.show_gradients = previous_state.show_gradients;
+  }
 }
 /* ################# */
 function fantasy_trends_current_or_season_num(
@@ -14736,7 +14860,10 @@ function fantasy_trends_current_or_season_num(
   );
 }
 /* ################# */
-function fantasy_trends_consistency(row, section) {
+function fantasy_trends_consistency(
+  row,
+  section
+) {
   if (section === 'hitters') {
     return fantasy_trends_current_or_season_num(
       row,
@@ -14771,6 +14898,144 @@ function fantasy_trends_ppg_threshold(
   }
 
   return thresholds.sp;
+}
+/* ################# */
+function fantasy_trends_raw_team_status(row) {
+  return String(
+    row?.team ||
+    row?.Team ||
+    row?.status ||
+    row?.Status ||
+    row?.injury_status ||
+    ''
+  ).trim().toUpperCase();
+}
+/* ################# */
+function fantasy_trends_is_injured(row) {
+  return new Set([
+    'IL7',
+    'IL10',
+    'IL15',
+  ]).has(
+    fantasy_trends_raw_team_status(row)
+  );
+}
+/* ################# */
+function fantasy_trends_is_excluded_status(row) {
+  const values = [
+    row?.team,
+    row?.Team,
+    row?.status,
+    row?.Status,
+    row?.injury_status,
+  ]
+    .map(value => {
+      return String(
+        value || ''
+      ).trim().toUpperCase();
+    })
+    .filter(value => {
+      return value;
+    });
+
+  return values.some(value => {
+    return new Set([
+      'IL60',
+      'IL-60',
+      '60-DAY IL',
+      '60 DAY IL',
+      'OFS',
+      'OOS',
+      'OUT FOR SEASON',
+      'OUT_FOR_SEASON',
+      'SUSP',
+      'SUSPENDED',
+    ]).has(value);
+  });
+}
+/* ################# */
+function fantasy_trends_find_sidebar_link(
+  row,
+  section
+) {
+  const person_key = String(
+    row?.person_key || ''
+  ).trim();
+
+  const page_role = fantasy_trends_page_role(
+    section
+  );
+
+  if (!person_key) {
+    return null;
+  }
+
+  return fantasy_find_toc_link({
+    person_key: person_key,
+    role: page_role,
+  });
+}
+/* ################# */
+function fantasy_trends_is_rostered(
+  row,
+  section
+) {
+  if (fantasy_trends_is_excluded_status(row)) {
+    return false;
+  }
+
+  const status = fantasy_trends_raw_team_status(
+    row
+  );
+
+  if (
+    new Set([
+      'IL7',
+      'IL10',
+      'IL15',
+    ]).has(status)
+  ) {
+    return true;
+  }
+
+  if (
+    new Set([
+      '',
+      'FA',
+      'FREE AGENT',
+      'FREE AGENTS',
+      'MILB',
+      'UNK',
+      'RETIRED',
+      'JOURNEYMEN',
+    ]).has(status)
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    fantasy_trends_find_sidebar_link(
+      row,
+      section
+    )
+  );
+}
+/* ################# */
+function fantasy_trends_should_include_roster_status(
+  row,
+  section
+) {
+  if (
+    fantasy_trends_state.hide_injured &&
+    fantasy_trends_is_injured(row)
+  ) {
+    return false;
+  }
+
+  return fantasy_trends_is_rostered(
+    row,
+    section
+  );
 }
 /* ################# */
 function fantasy_trends_is_free_agent(
@@ -14813,6 +15078,10 @@ function fantasy_trends_is_free_agent(
     return false;
   }
 
+  if (rall < 5) {
+    return false;
+  }
+
   const min_ppg = fantasy_trends_ppg_threshold(
     section,
     row,
@@ -14825,12 +15094,16 @@ function fantasy_trends_is_free_agent(
 
   return (
     own_pct >= 1 &&
-    own_pct < 30 &&
+    own_pct < 40 &&
     (
       rall >= 20 ||
       (
         score >= 40 &&
         all >= 10
+      ) ||
+      (
+        score >= 60 ||
+        all >= 15
       )
     ) &&
     ppg >= min_ppg
@@ -14843,6 +15116,10 @@ function fantasy_trends_is_undervalued(
 ) {
   const own_pct = fantasy_trends_num(
     row?.['Own%']
+  );
+
+  const rall = fantasy_trends_num(
+    row?.rAll
   );
 
   const score = fantasy_trends_current_or_season_num(
@@ -14870,6 +15147,7 @@ function fantasy_trends_is_undervalued(
 
   if (
     own_pct == null ||
+    rall == null ||
     score == null ||
     all == null ||
     consistency == null ||
@@ -14893,10 +15171,10 @@ function fantasy_trends_is_undervalued(
     : 10;
 
   return (
-    own_pct >= 30 &&
-    own_pct < 70 &&
+    own_pct >= 40 &&
+    own_pct < 95 &&
     score >= 60 &&
-    all >= 20 &&
+    all >= 10 &&
     consistency >= min_consistency &&
     ppg < max_ppg
   );
@@ -14908,6 +15186,10 @@ function fantasy_trends_is_overvalued(
 ) {
   const own_pct = fantasy_trends_num(
     row?.['Own%']
+  );
+
+  const rall = fantasy_trends_num(
+    row?.rAll
   );
 
   const score = fantasy_trends_current_or_season_num(
@@ -14929,6 +15211,7 @@ function fantasy_trends_is_overvalued(
 
   if (
     own_pct == null ||
+    rall == null ||
     score == null ||
     all == null ||
     consistency == null
@@ -14937,130 +15220,37 @@ function fantasy_trends_is_overvalued(
   }
 
   return (
-    own_pct >= 80 &&
+    own_pct >= 70 &&
     score < -40 &&
     all < -10 &&
     consistency < 10
   );
 }
 /* ################# */
-function fantasy_trends_sort_rows(
-  rows,
-  trend_type
-) {
-  return [...rows].sort((a, b) => {
-    const a_score = fantasy_trends_current_or_season_num(
-      a,
-      'S Score',
-      'Score'
-    );
+function fantasy_trends_hitter_position_values(row) {
+  const values = [
+    row?.pos,
+    row?.Pos,
+    row?.position,
+    row?.['2nd Pos'],
+    row?.pos2,
+    row?.second_pos,
+  ];
 
-    const b_score = fantasy_trends_current_or_season_num(
-      b,
-      'S Score',
-      'Score'
-    );
-
-    const a_all = fantasy_trends_current_or_season_num(
-      a,
-      'S All',
-      'All'
-    );
-
-    const b_all = fantasy_trends_current_or_season_num(
-      b,
-      'S All',
-      'All'
-    );
-
-    const a_ppg = fantasy_trends_current_or_season_num(
-      a,
-      'S PPG',
-      'PPG'
-    );
-
-    const b_ppg = fantasy_trends_current_or_season_num(
-      b,
-      'S PPG',
-      'PPG'
-    );
-
-    const a_section = String(
-      a?.fantasy_trends_section || ''
-    ).trim();
-
-    const b_section = String(
-      b?.fantasy_trends_section || ''
-    ).trim();
-
-    const a_consistency = fantasy_trends_consistency(
-      a,
-      a_section
-    );
-
-    const b_consistency = fantasy_trends_consistency(
-      b,
-      b_section
-    );
-
-    if (trend_type === 'overvalued') {
-      const score_cmp =
-        (a_score ?? Infinity) -
-        (b_score ?? Infinity);
-
-      if (score_cmp !== 0) {
-        return score_cmp;
-      }
-
-      const all_cmp =
-        (a_all ?? Infinity) -
-        (b_all ?? Infinity);
-
-      if (all_cmp !== 0) {
-        return all_cmp;
-      }
-
-      const consistency_cmp =
-        (a_consistency ?? Infinity) -
-        (b_consistency ?? Infinity);
-
-      if (consistency_cmp !== 0) {
-        return consistency_cmp;
-      }
-    } else {
-      const score_cmp =
-        (b_score ?? -Infinity) -
-        (a_score ?? -Infinity);
-
-      if (score_cmp !== 0) {
-        return score_cmp;
-      }
-
-      const all_cmp =
-        (b_all ?? -Infinity) -
-        (a_all ?? -Infinity);
-
-      if (all_cmp !== 0) {
-        return all_cmp;
-      }
-
-      const ppg_cmp =
-        (b_ppg ?? -Infinity) -
-        (a_ppg ?? -Infinity);
-
-      if (ppg_cmp !== 0) {
-        return ppg_cmp;
-      }
-    }
-
-    return String(
-      a?.name || ''
-    ).localeCompare(
-      String(
-        b?.name || ''
+  return values
+    .flatMap(value => {
+      return String(
+        value || ''
       )
-    );
-  });
+        .toUpperCase()
+        .split(/[,/|]/);
+    })
+    .map(value => {
+      return value.trim();
+    })
+    .filter(value => {
+      return value;
+    });
 }
 /* ################# */
 function fantasy_trends_hitter_matches_position(
@@ -15075,18 +15265,9 @@ function fantasy_trends_hitter_matches_position(
     return true;
   }
 
-  const primary_position = String(
-    row?.Pos || ''
-  ).trim().toUpperCase();
-
-  const secondary_position = String(
-    row?.['2nd Pos'] || ''
-  ).trim().toUpperCase();
-
-  return (
-    primary_position === selected ||
-    secondary_position === selected
-  );
+  return fantasy_trends_hitter_position_values(
+    row
+  ).includes(selected);
 }
 /* ################# */
 function fantasy_trends_pitcher_matches_role(
@@ -15128,6 +15309,369 @@ function fantasy_trends_filter_values(
   );
 }
 /* ################# */
+function fantasy_trends_sort_state(
+  trend_type,
+  table_type
+) {
+  return (
+    fantasy_trends_state.sorts?.[trend_type]?.[table_type] ||
+    {
+      key: 'name',
+      desc: false,
+    }
+  );
+}
+/* ################# */
+function fantasy_trends_default_sort_fields(
+  trend_type
+) {
+  if (trend_type === 'free_agents') {
+    return [
+      {
+        key: 'rAll',
+        desc: true,
+      },
+      {
+        key: 'Own%',
+        desc: false,
+      },
+      {
+        key: 'S All',
+        desc: true,
+      },
+      {
+        key: 'All',
+        desc: true,
+      },
+    ];
+  }
+
+  if (trend_type === 'overvalued') {
+    return [
+      {
+        key: 'Own%',
+        desc: true,
+      },
+      {
+        key: 'S All',
+        desc: false,
+      },
+      {
+        key: 'All',
+        desc: false,
+      },
+    ];
+  }
+
+  return [
+    {
+      key: 'Own%',
+      desc: false,
+    },
+    {
+      key: 'S All',
+      desc: true,
+    },
+    {
+      key: 'All',
+      desc: true,
+    },
+  ];
+}
+/* ################# */
+function fantasy_trends_sort_value(
+  row,
+  key
+) {
+  if (key === 'name') {
+    return String(
+      row?.name || ''
+    ).toLowerCase();
+  }
+
+  if (key === 'team') {
+    return String(
+      row?.display_team ||
+      row?.team ||
+      ''
+    ).toLowerCase();
+  }
+
+  return fantasy_trends_num(
+    row?.[key]
+  );
+}
+/* ################# */
+function fantasy_trends_compare_values(
+  a,
+  b,
+  key,
+  desc
+) {
+  const av = fantasy_trends_sort_value(
+    a,
+    key
+  );
+
+  const bv = fantasy_trends_sort_value(
+    b,
+    key
+  );
+
+  if (
+    typeof av === 'string' ||
+    typeof bv === 'string'
+  ) {
+    const text_cmp = String(
+      av || ''
+    ).localeCompare(
+      String(
+        bv || ''
+      )
+    );
+
+    return desc
+      ? -text_cmp
+      : text_cmp;
+  }
+
+  if (
+    av == null &&
+    bv == null
+  ) {
+    return 0;
+  }
+
+  if (av == null) {
+    return 1;
+  }
+
+  if (bv == null) {
+    return -1;
+  }
+
+  if (av === bv) {
+    return 0;
+  }
+
+  return desc
+    ? bv - av
+    : av - bv;
+}
+/* ################# */
+function fantasy_trends_sort_rows(
+  rows,
+  trend_type,
+  table_type
+) {
+  const sort_state = fantasy_trends_sort_state(
+    trend_type,
+    table_type
+  );
+
+  const default_fields = fantasy_trends_default_sort_fields(
+    trend_type
+  );
+
+  const fields = [
+    {
+      key: sort_state.key,
+      desc: sort_state.desc,
+    },
+    ...default_fields.filter(field => {
+      return field.key !== sort_state.key;
+    }),
+  ];
+
+  return [...rows].sort((a, b) => {
+    for (const field of fields) {
+      const cmp = fantasy_trends_compare_values(
+        a,
+        b,
+        field.key,
+        field.desc
+      );
+
+      if (cmp !== 0) {
+        return cmp;
+      }
+    }
+
+    return String(
+      a?.name || ''
+    ).localeCompare(
+      String(
+        b?.name || ''
+      )
+    );
+  });
+}
+/* ################# */
+function fantasy_trends_removals_storage_key() {
+  return 'fantasy_trends_removed_players_v1';
+}
+/* ################# */
+function fantasy_trends_get_removed_map() {
+  try {
+    const raw = sessionStorage.getItem(
+      fantasy_trends_removals_storage_key()
+    );
+
+    const parsed = raw
+      ? JSON.parse(raw)
+      : {};
+
+    return (
+      parsed &&
+      typeof parsed === 'object'
+    )
+      ? parsed
+      : {};
+  } catch (err) {
+    return {};
+  }
+}
+/* ################# */
+function fantasy_trends_set_removed_map(map) {
+  sessionStorage.setItem(
+    fantasy_trends_removals_storage_key(),
+    JSON.stringify(
+      map || {}
+    )
+  );
+}
+/* ################# */
+function fantasy_trends_removed_bucket_key(
+  trend_type,
+  table_type
+) {
+  return [
+    String(
+      fantasy_trends_state.year || ''
+    ),
+    String(
+      trend_type || ''
+    ),
+    String(
+      table_type || ''
+    ),
+  ].join('|');
+}
+/* ################# */
+function fantasy_trends_is_removed(
+  row,
+  trend_type,
+  table_type
+) {
+  const map = fantasy_trends_get_removed_map();
+
+  const bucket = map[
+    fantasy_trends_removed_bucket_key(
+      trend_type,
+      table_type
+    )
+  ] || {};
+
+  const person_key = String(
+    row?.person_key ||
+    normalize_matchup_person_key(
+      row?.name || ''
+    ) ||
+    ''
+  );
+
+  return Boolean(
+    person_key &&
+    bucket[person_key]
+  );
+}
+/* ################# */
+function fantasy_trends_remove_player(
+  row,
+  trend_type,
+  table_type
+) {
+  const map = fantasy_trends_get_removed_map();
+
+  const bucket_key = fantasy_trends_removed_bucket_key(
+    trend_type,
+    table_type
+  );
+
+  const bucket = map[bucket_key] || {};
+
+  const person_key = String(
+    row?.person_key ||
+    normalize_matchup_person_key(
+      row?.name || ''
+    ) ||
+    ''
+  );
+
+  if (!person_key) {
+    return;
+  }
+
+  bucket[person_key] = 1;
+  map[bucket_key] = bucket;
+
+  fantasy_trends_set_removed_map(
+    map
+  );
+}
+/* ################# */
+function fantasy_trends_clear_removed_players(
+  trend_type,
+  table_type
+) {
+  const map = fantasy_trends_get_removed_map();
+
+  delete map[
+    fantasy_trends_removed_bucket_key(
+      trend_type,
+      table_type
+    )
+  ];
+
+  fantasy_trends_set_removed_map(
+    map
+  );
+}
+/* ################# */
+function fantasy_trends_effective_team(
+  row,
+  section
+) {
+  const fantasy_row = {
+    ...row,
+    role: row?.role || fantasy_trends_page_role(
+      section
+    ),
+  };
+
+  return fantasy_trends_with_fantasy_state(
+    section,
+    () => {
+      return fantasy_effective_team(
+        fantasy_row
+      );
+    }
+  );
+}
+/* ################# */
+function fantasy_trends_prepare_row(
+  row,
+  section
+) {
+  return {
+    ...row,
+    display_team: fantasy_trends_effective_team(
+      row,
+      section
+    ),
+  };
+}
+/* ################# */
 function fantasy_trends_collect_rows(
   data,
   trend_type
@@ -15149,10 +15693,21 @@ function fantasy_trends_collect_rows(
   const hitters = (
     majors.hitters || []
   )
-    .map(row => ({
-      ...row,
-      fantasy_trends_section: 'hitters',
-    }))
+    .map(row => {
+      return fantasy_trends_prepare_row(
+        {
+          ...row,
+          fantasy_trends_section: 'hitters',
+        },
+        'hitters'
+      );
+    })
+    .filter(row => {
+      return fantasy_trends_should_include_roster_status(
+        row,
+        'hitters'
+      );
+    })
     .filter(row => {
       return predicate(
         row,
@@ -15163,6 +15718,13 @@ function fantasy_trends_collect_rows(
       return fantasy_trends_hitter_matches_position(
         row,
         filters.hitters
+      );
+    })
+    .filter(row => {
+      return !fantasy_trends_is_removed(
+        row,
+        trend_type,
+        'hitters'
       );
     });
 
@@ -15176,6 +15738,18 @@ function fantasy_trends_collect_rows(
       fantasy_trends_section: 'rp',
     })),
   ]
+    .map(row => {
+      return fantasy_trends_prepare_row(
+        row,
+        row.fantasy_trends_section
+      );
+    })
+    .filter(row => {
+      return fantasy_trends_should_include_roster_status(
+        row,
+        row.fantasy_trends_section
+      );
+    })
     .filter(row => {
       return predicate(
         row,
@@ -15187,33 +15761,50 @@ function fantasy_trends_collect_rows(
         row,
         filters.pitchers
       );
+    })
+    .filter(row => {
+      return !fantasy_trends_is_removed(
+        row,
+        trend_type,
+        'pitchers'
+      );
     });
 
   return {
     hitters: fantasy_trends_sort_rows(
       hitters,
-      trend_type
+      trend_type,
+      'hitters'
     ),
     pitchers: fantasy_trends_sort_rows(
       pitchers,
-      trend_type
+      trend_type,
+      'pitchers'
     ),
   };
 }
 /* ################# */
 function fantasy_trends_column_label(key) {
-  if (key === 'name') return 'Name';
-  if (key === 'team') return 'Team';
+  const label_map = {
+    name: 'Name',
+    team: 'Team',
+    'S PA': 'Streak PA',
+    'S IP': 'Streak IP',
+    'S PPG': 'Streak PPG',
+    'S Score': 'Streak Score',
+    'S All': 'Streak All',
+    'S OPS': 'Streak OPS',
+  };
 
-  return key;
+  return label_map[key] || fantasy_display_label(
+    key
+  );
 }
 /* ################# */
 function fantasy_trends_format_value(
   key,
   value
 ) {
-  const n = fantasy_trends_num(value);
-
   if (
     value == null ||
     value === ''
@@ -15221,82 +15812,44 @@ function fantasy_trends_format_value(
     return '—';
   }
 
-  if (key === 'Own%') {
-    return n == null
-      ? '—'
-      : `${n.toFixed(1).replace(/\.0$/, '')}%`;
-  }
+  const formatted = fantasy_fmt(
+    key,
+    value
+  );
 
-  if (
-    key === 'AVG' ||
-    key === 'OBP' ||
-    key === 'SLG' ||
-    key === 'OPS' ||
-    key === 'S OPS'
-  ) {
-    return n == null
-      ? '—'
-      : n.toFixed(3).replace(/^0/, '');
-  }
-
-  if (
-    key === 'ERA' ||
-    key === 'WHIP'
-  ) {
-    return n == null
-      ? '—'
-      : n.toFixed(2);
-  }
-
-  if (
-    key === 'IP' ||
-    key === 'S IP'
-  ) {
-    return n == null
-      ? '—'
-      : n.toFixed(1);
-  }
-
-  if (
-    key === 'PPG' ||
-    key === 'S PPG' ||
-    key === 'Score' ||
-    key === 'All' ||
-    key === 'rAll' ||
-    key === 'S Score' ||
-    key === 'S All'
-  ) {
-    return n == null
-      ? '—'
-      : n.toFixed(1).replace(/\.0$/, '');
-  }
-
-  if (n != null) {
-    return Number.isInteger(n)
-      ? String(n)
-      : n.toFixed(1).replace(/\.0$/, '');
-  }
-
-  return String(value);
+  return formatted === ''
+    ? '—'
+    : formatted;
 }
 /* ################# */
 function fantasy_trends_page_link(
   row,
   section
 ) {
+  const direct_match = fantasy_trends_find_sidebar_link(
+    row,
+    section
+  );
+
+  if (direct_match) {
+    return String(
+      direct_match.dataset.page || ''
+    ).trim();
+  }
+
   const target_key = normalize_matchup_person_key(
     row?.person_key ||
     row?.name ||
     ''
   );
 
-  if (!target_key) return '';
+  if (!target_key) {
+    return '';
+  }
 
-  const expected_role = section === 'hitters'
-    ? 'batters'
-    : section === 'sp'
-      ? 'starters'
-      : 'bullpen';
+  const expected_role = fantasy_trends_page_role(
+    section
+  );
 
   const links = Array.from(
     document.querySelectorAll(
@@ -15344,53 +15897,131 @@ function fantasy_trends_name_html(
     row?.name || ''
   );
 
-  if (!page) return name;
+  const person_key = String(
+    row?.person_key || ''
+  );
+
+  const role = fantasy_trends_page_role(
+    section
+  );
+
+  if (!page) {
+    return `
+      <span
+        class='fantasy_trends_player_name'
+        data-person_key='${escape_attr(person_key)}'
+        data-role='${escape_attr(role)}'
+      >
+        ${name}
+      </span>
+    `;
+  }
 
   return `
     <a
       href='#${escape_attr(page)}'
-      class='fantasy_trends_player_link'
+      class='fantasy_player_link fantasy_trends_player_link'
       data-page='${escape_attr(page)}'
+      data-page_id='${escape_attr(page)}'
+      data-person_key='${escape_attr(person_key)}'
+      data-role='${escape_attr(role)}'
     >${name}</a>
   `;
 }
 /* ################# */
-function fantasy_trends_team_html(team) {
-  const code = String(
-    team || ''
-  ).trim().toUpperCase();
+function fantasy_trends_team_html(
+  row,
+  section
+) {
+  const team = (
+    row?.display_team ||
+    fantasy_trends_effective_team(
+      row,
+      section
+    )
+  );
 
-  const src = team_logo_src_for_code(code);
+  if (!team) {
+    return '—';
+  }
 
-  if (!code) return '—';
-  if (!src) return escape_html(code);
+  return (
+    fantasy_team_logo_html(
+      team
+    ) ||
+    escape_html(
+      String(team)
+    )
+  );
+}
+/* ################# */
+function fantasy_trends_gradient_style(
+  row,
+  key,
+  section
+) {
+  const value = fantasy_num(
+    row?.[key]
+  );
 
-  return `
-    <span
-      class='fantasy_trends_team_wrap'
-      title='${escape_attr(code)}'
-    >
-      <img
-        class='fantasy_trends_team_logo'
-        src='${escape_attr(src)}'
-        alt='${escape_attr(code)}'
-      >
-    </span>
-  `;
+  if (value == null) {
+    return '';
+  }
+
+  return fantasy_trends_with_fantasy_state(
+    section,
+    () => {
+      return fantasy_gradient_style(
+        row,
+        key,
+        value
+      );
+    }
+  );
 }
 /* ################# */
 function fantasy_trends_cell_html(
   row,
   key,
-  section
+  section,
+  trend_type,
+  table_type
 ) {
   if (key === 'name') {
+    const remove_btn = `
+      <button
+        type='button'
+        class='fantasy_trends_remove_btn'
+        data-person_key='${escape_attr(
+          String(
+            row?.person_key ||
+            normalize_matchup_person_key(
+              row?.name || ''
+            ) ||
+            ''
+          )
+        )}'
+        data-trend-type='${escape_attr(trend_type)}'
+        data-table-type='${escape_attr(table_type)}'
+        aria-label='Remove ${escape_attr(
+          String(
+            row?.name || ''
+          )
+        )}'
+        title='Remove'
+      >×</button>
+    `;
+
     return `
       <td class='fantasy_trends_name_cell'>
-        ${fantasy_trends_name_html(
-          row,
-          section
-        )}
+        <div class='fantasy_trends_name_cell_inner'>
+          ${fantasy_trends_name_html(
+            row,
+            section
+          )}
+
+          ${remove_btn}
+        </div>
       </td>
     `;
   }
@@ -15399,20 +16030,42 @@ function fantasy_trends_cell_html(
     return `
       <td class='fantasy_trends_team_cell'>
         ${fantasy_trends_team_html(
-          row.team
+          row,
+          section
         )}
       </td>
     `;
   }
 
+  const gradient_style = fantasy_trends_gradient_style(
+    row,
+    key,
+    section
+  );
+
+  const use_white_text = fantasy_should_use_white_text(
+    row,
+    key,
+    gradient_style
+  );
+
+  const cell_fill_class = use_white_text
+    ? 'fantasy_cell_fill fantasy_cell_fill_white_text'
+    : 'fantasy_cell_fill';
+
   return `
     <td>
-      ${escape_html(
-        fantasy_trends_format_value(
-          key,
-          row?.[key]
-        )
-      )}
+      <div
+        class='${cell_fill_class}'
+        style='${escape_attr(gradient_style)}'
+      >
+        ${escape_html(
+          fantasy_trends_format_value(
+            key,
+            row?.[key]
+          )
+        )}
+      </div>
     </td>
   `;
 }
@@ -15438,6 +16091,7 @@ function fantasy_trends_filter_select_html(
         ['3B', '3B'],
         ['SS', 'SS'],
         ['OF', 'OF'],
+        ['DH', 'DH'],
       ]
     : [
         ['ALL', 'All'],
@@ -15469,6 +16123,52 @@ function fantasy_trends_filter_select_html(
   `;
 }
 /* ################# */
+function fantasy_trends_sort_header_html(
+  key,
+  trend_type,
+  table_type
+) {
+  const sort_state = fantasy_trends_sort_state(
+    trend_type,
+    table_type
+  );
+
+  let arrow = '↕';
+  let active_class = '';
+
+  if (sort_state.key === key) {
+    arrow = sort_state.desc
+      ? '↓'
+      : '↑';
+
+    active_class = ' fantasy_trends_sort_btn_active';
+  }
+
+  return `
+    <th>
+      <button
+        type='button'
+        class='fantasy_trends_sort_btn${active_class}'
+        data-sort-key='${escape_attr(key)}'
+        data-trend-type='${escape_attr(trend_type)}'
+        data-table-type='${escape_attr(table_type)}'
+      >
+        <span class='fantasy_trends_sort_label'>
+          ${escape_html(
+            fantasy_trends_column_label(
+              key
+            )
+          )}
+        </span>
+
+        <span class='fantasy_trends_sort_arrow'>
+          ${arrow}
+        </span>
+      </button>
+    </th>
+  `;
+}
+/* ################# */
 function fantasy_trends_table_html(
   rows,
   columns,
@@ -15494,7 +16194,9 @@ function fantasy_trends_table_html(
               return fantasy_trends_cell_html(
                 row,
                 key,
-                row_section
+                row_section,
+                trend_type,
+                table_type
               );
             }).join('')}
           </tr>
@@ -15512,44 +16214,64 @@ function fantasy_trends_table_html(
     `;
 
   return `
-    <div class='fantasy_trends_table_block'>
+    <div
+      class='fantasy_trends_table_block'
+      data-trend-type='${escape_attr(trend_type)}'
+      data-table-type='${escape_attr(table_type)}'
+    >
       <div class='fantasy_trends_table_header'>
-        <div class='fantasy_trends_table_title'>
-          ${escape_html(title)}
+        <div class='fantasy_trends_table_header_left'>
+          <div class='fantasy_trends_table_title'>
+            ${escape_html(title)}
 
-          <span class='fantasy_trends_count'>
-            ${rows.length}
-          </span>
+            <span class='fantasy_trends_count'>
+              ${rows.length}
+            </span>
+          </div>
+
+          ${fantasy_trends_filter_select_html(
+            trend_type,
+            table_type
+          )}
         </div>
 
-        ${fantasy_trends_filter_select_html(
-          trend_type,
-          table_type
-        )}
+        <button
+          type='button'
+          class='fantasy_trends_undo_removals'
+          data-trend-type='${escape_attr(trend_type)}'
+          data-table-type='${escape_attr(table_type)}'
+        >
+          Undo Removals
+        </button>
       </div>
 
-      <div class='fantasy_trends_table_wrap'>
-        <table class='fantasy_trends_table'>
-          <thead>
-            <tr>
-              ${columns.map(key => {
-                return `
-                  <th>
-                    ${escape_html(
-                      fantasy_trends_column_label(
-                        key
-                      )
-                    )}
-                  </th>
-                `;
-              }).join('')}
-            </tr>
-          </thead>
+      <div class='fantasy_trends_scroll_shell'>
+        <div
+          class='fantasy_trends_top_scroll'
+          aria-hidden='true'
+        >
+          <div class='fantasy_trends_top_scroll_inner'></div>
+        </div>
 
-          <tbody>
-            ${body_html}
-          </tbody>
-        </table>
+        <div class='fantasy_trends_table_wrap'>
+          <table class='fantasy_trends_table'>
+            <thead>
+              <tr>
+                ${columns.map(key => {
+                  return fantasy_trends_sort_header_html(
+                    key,
+                    trend_type,
+                    table_type
+                  );
+                }).join('')}
+              </tr>
+            </thead>
+
+            <tbody>
+              ${body_html}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   `;
@@ -15593,6 +16315,29 @@ function fantasy_trends_section_html(
   `;
 }
 /* ################# */
+function fantasy_trends_controls_html() {
+  return `
+    <div class='fantasy_trends_controls'>
+      <div class='fantasy_trends_note'>
+        Me trying to automate trends and my own opinions with formulas lol
+      </div>
+
+      <label
+        class='fantasy_trends_hide_injured_control'
+        for='fantasy_trends_hide_injured'
+      >
+        <input
+          id='fantasy_trends_hide_injured'
+          type='checkbox'
+          ${fantasy_trends_state.hide_injured ? 'checked' : ''}
+        >
+
+        <span>Hide injured players</span>
+      </label>
+    </div>
+  `;
+}
+/* ################# */
 function fantasy_trends_results_html(data) {
   return `
     <div class='fantasy_trends_sections'>
@@ -15617,13 +16362,296 @@ function fantasy_trends_results_html(data) {
   `;
 }
 /* ################# */
+function fantasy_trends_capture_scroll_state(root) {
+  const state = {};
+
+  root?.querySelectorAll(
+    '.fantasy_trends_table_block'
+  ).forEach(block => {
+    const trend_type = String(
+      block.dataset.trendType || ''
+    );
+
+    const table_type = String(
+      block.dataset.tableType || ''
+    );
+
+    const table_wrap = block.querySelector(
+      '.fantasy_trends_table_wrap'
+    );
+
+    state[
+      `${trend_type}|${table_type}`
+    ] = table_wrap
+      ? table_wrap.scrollLeft
+      : 0;
+  });
+
+  return state;
+}
+/* ################# */
+function fantasy_trends_restore_scroll_state(
+  root,
+  state
+) {
+  if (!state) {
+    return;
+  }
+
+  root?.querySelectorAll(
+    '.fantasy_trends_table_block'
+  ).forEach(block => {
+    const trend_type = String(
+      block.dataset.trendType || ''
+    );
+
+    const table_type = String(
+      block.dataset.tableType || ''
+    );
+
+    const left = Number(
+      state[
+        `${trend_type}|${table_type}`
+      ] || 0
+    );
+
+    const table_wrap = block.querySelector(
+      '.fantasy_trends_table_wrap'
+    );
+
+    const top_scroll = block.querySelector(
+      '.fantasy_trends_top_scroll'
+    );
+
+    if (table_wrap) {
+      table_wrap.scrollLeft = left;
+    }
+
+    if (top_scroll) {
+      top_scroll.scrollLeft = left;
+    }
+  });
+}
+/* ################# */
+function fantasy_trends_sync_top_scroll(block) {
+  const top_scroll = block.querySelector(
+    '.fantasy_trends_top_scroll'
+  );
+
+  const top_inner = block.querySelector(
+    '.fantasy_trends_top_scroll_inner'
+  );
+
+  const table_wrap = block.querySelector(
+    '.fantasy_trends_table_wrap'
+  );
+
+  if (
+    !top_scroll ||
+    !top_inner ||
+    !table_wrap
+  ) {
+    return;
+  }
+
+  const scroll_width = Math.ceil(
+    table_wrap.scrollWidth
+  );
+
+  const viewport_width = Math.ceil(
+    table_wrap.clientWidth
+  );
+
+  const needs_scroll = (
+    scroll_width >
+    viewport_width + 1
+  );
+
+  top_inner.style.width = `${scroll_width}px`;
+  top_scroll.style.display = needs_scroll
+    ? 'block'
+    : 'none';
+
+  top_scroll.scrollLeft = table_wrap.scrollLeft;
+}
+/* ################# */
+function bind_fantasy_trends_scrollbars(
+  root,
+  scroll_state = null
+) {
+  root?.querySelectorAll(
+    '.fantasy_trends_table_block'
+  ).forEach(block => {
+    const top_scroll = block.querySelector(
+      '.fantasy_trends_top_scroll'
+    );
+
+    const table_wrap = block.querySelector(
+      '.fantasy_trends_table_wrap'
+    );
+
+    const table = block.querySelector(
+      '.fantasy_trends_table'
+    );
+
+    if (
+      !top_scroll ||
+      !table_wrap ||
+      !table
+    ) {
+      return;
+    }
+
+    let syncing_from_top = false;
+    let syncing_from_bottom = false;
+
+    top_scroll.addEventListener(
+      'scroll',
+      () => {
+        if (syncing_from_bottom) {
+          return;
+        }
+
+        syncing_from_top = true;
+        table_wrap.scrollLeft = top_scroll.scrollLeft;
+        syncing_from_top = false;
+      }
+    );
+
+    table_wrap.addEventListener(
+      'scroll',
+      () => {
+        if (syncing_from_top) {
+          return;
+        }
+
+        syncing_from_bottom = true;
+        top_scroll.scrollLeft = table_wrap.scrollLeft;
+        syncing_from_bottom = false;
+      }
+    );
+
+    const sync_sizes = () => {
+      fantasy_trends_sync_top_scroll(
+        block
+      );
+    };
+
+    requestAnimationFrame(() => {
+      sync_sizes();
+
+      fantasy_trends_restore_scroll_state(
+        root,
+        scroll_state
+      );
+
+      requestAnimationFrame(() => {
+        sync_sizes();
+
+        fantasy_trends_restore_scroll_state(
+          root,
+          scroll_state
+        );
+      });
+
+      setTimeout(() => {
+        sync_sizes();
+
+        fantasy_trends_restore_scroll_state(
+          root,
+          scroll_state
+        );
+      }, 60);
+
+      setTimeout(() => {
+        sync_sizes();
+
+        fantasy_trends_restore_scroll_state(
+          root,
+          scroll_state
+        );
+      }, 180);
+    });
+
+    if (window.ResizeObserver) {
+      const resize_observer = new ResizeObserver(
+        sync_sizes
+      );
+
+      resize_observer.observe(
+        table_wrap
+      );
+
+      resize_observer.observe(
+        table
+      );
+    } else {
+      window.addEventListener(
+        'resize',
+        sync_sizes
+      );
+    }
+  });
+}
+/* ################# */
+async function fantasy_trends_refresh_results(
+  scroll_state = null
+) {
+  const results_root = document.getElementById(
+    'fantasy_trends_results_root'
+  );
+
+  if (
+    !results_root ||
+    !fantasy_trends_state.data
+  ) {
+    return;
+  }
+
+  const saved_scroll_state = scroll_state ||
+    fantasy_trends_capture_scroll_state(
+      results_root
+    );
+
+  results_root.innerHTML = fantasy_trends_results_html(
+    fantasy_trends_state.data
+  );
+
+  bind_fantasy_trends_player_links(
+    results_root
+  );
+
+  bind_fantasy_trends_filters(
+    results_root
+  );
+
+  bind_fantasy_trends_sorting(
+    results_root
+  );
+
+  bind_fantasy_trends_removals(
+    results_root
+  );
+
+  bind_fantasy_trends_scrollbars(
+    results_root,
+    saved_scroll_state
+  );
+
+  await sync_fantasy_streak_emojis(
+    results_root
+  );
+}
+/* ################# */
 function bind_fantasy_trends_player_links(root) {
   const scope = root || document;
 
   scope.querySelectorAll(
     '.fantasy_trends_player_link[data-page]'
   ).forEach(a => {
-    if (a.dataset.bound === '1') return;
+    if (a.dataset.bound === '1') {
+      return;
+    }
 
     a.dataset.bound = '1';
 
@@ -15634,9 +16662,13 @@ function bind_fantasy_trends_player_links(root) {
         a.dataset.page || ''
       ).trim();
 
-      if (!page) return;
+      if (!page) {
+        return;
+      }
 
-      activate_page(page);
+      activate_page(
+        page
+      );
     });
   });
 }
@@ -15647,7 +16679,9 @@ function bind_fantasy_trends_filters(root) {
   scope.querySelectorAll(
     '.fantasy_trends_filter_select'
   ).forEach(select => {
-    if (select.dataset.bound === '1') return;
+    if (select.dataset.bound === '1') {
+      return;
+    }
 
     select.dataset.bound = '1';
 
@@ -15678,30 +16712,199 @@ function bind_fantasy_trends_filters(root) {
         select.value || 'ALL'
       ).trim().toUpperCase();
 
-      const results_root = document.getElementById(
-        'fantasy_trends_results_root'
+      fantasy_trends_refresh_results();
+    });
+  });
+}
+/* ################# */
+function bind_fantasy_trends_sorting(root) {
+  const scope = root || document;
+
+  scope.querySelectorAll(
+    '.fantasy_trends_sort_btn'
+  ).forEach(button => {
+    if (button.dataset.bound === '1') {
+      return;
+    }
+
+    button.dataset.bound = '1';
+
+    button.addEventListener('click', () => {
+      const trend_type = String(
+        button.dataset.trendType || ''
+      ).trim();
+
+      const table_type = String(
+        button.dataset.tableType || ''
+      ).trim();
+
+      const sort_key = String(
+        button.dataset.sortKey || ''
       );
 
+      const sort_state = fantasy_trends_state.sorts?.[
+        trend_type
+      ]?.[
+        table_type
+      ];
+
       if (
-        !results_root ||
-        !fantasy_trends_state.data
+        !sort_state ||
+        !sort_key
       ) {
         return;
       }
 
-      results_root.innerHTML = fantasy_trends_results_html(
-        fantasy_trends_state.data
-      );
+      if (sort_state.key === sort_key) {
+        sort_state.desc = !sort_state.desc;
+      } else {
+        sort_state.key = sort_key;
 
-      bind_fantasy_trends_player_links(
-        results_root
-      );
+        const source_key = fantasy_trends_with_fantasy_state(
+          table_type === 'hitters'
+            ? 'hitters'
+            : 'sp',
+          () => {
+            return fantasy_gradient_source_key(
+              {},
+              sort_key
+            );
+          }
+        );
 
-      bind_fantasy_trends_filters(
-        results_root
-      );
+        const spec = fantasy_state.scales?.panel_scale_lookup?.[
+          source_key
+        ];
+
+        if (spec?.mode === 'bad_only') {
+          sort_state.desc = false;
+        } else if (spec?.mode === 'good_only') {
+          sort_state.desc = true;
+        } else if (spec) {
+          sort_state.desc = (
+            spec.higher_is_better !== false
+          );
+        } else {
+          sort_state.desc = (
+            sort_key !== 'name' &&
+            sort_key !== 'team' &&
+            sort_key !== 'Own%'
+          );
+        }
+      }
+
+      fantasy_trends_refresh_results();
     });
   });
+}
+/* ################# */
+function bind_fantasy_trends_removals(root) {
+  const scope = root || document;
+
+  scope.querySelectorAll(
+    '.fantasy_trends_remove_btn'
+  ).forEach(button => {
+    if (button.dataset.bound === '1') {
+      return;
+    }
+
+    button.dataset.bound = '1';
+
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const trend_type = String(
+        button.dataset.trendType || ''
+      ).trim();
+
+      const table_type = String(
+        button.dataset.tableType || ''
+      ).trim();
+
+      const person_key = String(
+        button.dataset.personKey || ''
+      ).trim();
+
+      if (
+        !trend_type ||
+        !table_type ||
+        !person_key
+      ) {
+        return;
+      }
+
+      fantasy_trends_remove_player(
+        {
+          person_key: person_key,
+        },
+        trend_type,
+        table_type
+      );
+
+      fantasy_trends_refresh_results();
+    });
+  });
+
+  scope.querySelectorAll(
+    '.fantasy_trends_undo_removals'
+  ).forEach(button => {
+    if (button.dataset.bound === '1') {
+      return;
+    }
+
+    button.dataset.bound = '1';
+
+    button.addEventListener('click', () => {
+      const trend_type = String(
+        button.dataset.trendType || ''
+      ).trim();
+
+      const table_type = String(
+        button.dataset.tableType || ''
+      ).trim();
+
+      if (
+        !trend_type ||
+        !table_type
+      ) {
+        return;
+      }
+
+      fantasy_trends_clear_removed_players(
+        trend_type,
+        table_type
+      );
+
+      fantasy_trends_refresh_results();
+    });
+  });
+}
+/* ################# */
+function bind_fantasy_trends_controls(root) {
+  const scope = root || document;
+
+  const hide_injured = scope.querySelector(
+    '#fantasy_trends_hide_injured'
+  );
+
+  if (
+    hide_injured &&
+    hide_injured.dataset.bound !== '1'
+  ) {
+    hide_injured.dataset.bound = '1';
+
+    hide_injured.addEventListener(
+      'change',
+      () => {
+        fantasy_trends_state.hide_injured = Boolean(
+          hide_injured.checked
+        );
+
+        fantasy_trends_refresh_results();
+      }
+    );
+  }
 }
 /* ################# */
 async function render_fantasy_trends_page() {
@@ -15728,11 +16931,11 @@ async function render_fantasy_trends_page() {
 
   fantasy_trends_state.year = year;
 
-  controls_root.innerHTML = `
-    <div class='fantasy_trends_note'>
-      Current-season fantasy ownership and performance trends
-    </div>
-  `;
+  controls_root.innerHTML = fantasy_trends_controls_html();
+
+  bind_fantasy_trends_controls(
+    controls_root
+  );
 
   results_root.innerHTML = `
     <div class='fantasy_trends_loading'>
@@ -15740,40 +16943,48 @@ async function render_fantasy_trends_page() {
     </div>
   `;
 
-  const data = await load_fantasy_year(
-    year
-  );
+  try {
+    await load_fantasy_scales();
 
-  if (!data) {
+    const data = await load_fantasy_data(
+      year
+    );
+
+    if (!data) {
+      fantasy_trends_state.data = null;
+
+      results_root.innerHTML = `
+        <div class='fantasy_trends_empty'>
+          No fantasy data found for ${escape_html(year)}
+        </div>
+      `;
+
+      return;
+    }
+
+    fantasy_trends_state.data = data;
+
+    fantasy_build_page_lookup();
+
+    await fantasy_trends_refresh_results();
+  } catch (err) {
     fantasy_trends_state.data = null;
 
     results_root.innerHTML = `
       <div class='fantasy_trends_empty'>
-        No fantasy data found for ${escape_html(year)}
+        ${escape_html(
+          String(
+            err?.message ||
+            err ||
+            'Unable to load fantasy trends'
+          )
+        )}
       </div>
     `;
-
-    return;
   }
-
-  fantasy_trends_state.data = data;
-
-  results_root.innerHTML = fantasy_trends_results_html(
-    data
-  );
-
-  bind_fantasy_trends_player_links(
-    results_root
-  );
-
-  bind_fantasy_trends_filters(
-    results_root
-  );
 }
 /* ################# */
-function init_fantasy_trends_page_if_present(
-  content
-) {
+function init_fantasy_trends_page_if_present(content) {
   const scope = content || document;
 
   if (

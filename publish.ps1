@@ -29,4 +29,4 @@ if ($LASTEXITCODE -ge 8) { throw "Robocopy failed with exit code $LASTEXITCODE" 
 
 git add .
 git commit -m "update"
-git push --force
+git push origin main --force
