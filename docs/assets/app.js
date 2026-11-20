@@ -5912,6 +5912,7 @@ if (toggle_sidebar_btn) {
   toggle_sidebar_btn.addEventListener('click', () => {
     const hidden = sidebar && sidebar.classList.contains('hidden');
     set_sidebar_hidden(!hidden);
+    if (hidden && mobile_sidebar.matches) sidebar.scrollIntoView({ block: 'start' });
   });
 }
 
