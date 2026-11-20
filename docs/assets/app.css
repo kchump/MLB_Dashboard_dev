@@ -3553,6 +3553,7 @@ TODAY SCORE BADGES + PROSPECTS
 .snapshot_gameday { display: inline-block; padding: 7px 10px; }
 .snapshot_rankings { margin-top: 8px; }
 .snapshot_rankings table, .prospect_grid table { width: 100%; }
+.snapshot_rankings th:nth-child(2), .snapshot_rankings td:nth-child(2) { text-align: left; }
 .snapshot_rankings .snapshot_team { gap: 3px; }
 .snapshot_rankings .snapshot_team img { width: 16px; height: 16px; }
 .snapshot_rankings .snapshot_vs { color: var(--muted); }
