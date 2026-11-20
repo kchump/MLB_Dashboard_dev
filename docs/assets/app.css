@@ -3514,3 +3514,10 @@ RESPONSIVE / MOBILE
 .snapshot_grid th:first-child { text-align: left; }
 .stat_glossary_link { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
 .stat_glossary_tip { position: fixed; z-index: 10000; width: max-content; max-width: min(300px, calc(100vw - 16px)); box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); white-space: normal; pointer-events: none; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .app:has(.today_snapshot) { --mobile_zoom: 1; }
+  .app:has(.today_snapshot) .content { box-sizing: border-box; }
+  .player_page:has(.today_snapshot) .player_page_inner { width: 100%; }
+  .player_page:has(.today_snapshot) .static_page { overflow-x: auto; }
+}

@@ -51,25 +51,36 @@
       ? box.bottom + 5 : Math.max(8, box.top - tip.offsetHeight - 5);
     tip.style.top = top + 'px';
   }
+  const bound = new WeakSet();
+  function bindTip(control, term) {
+    if (bound.has(control)) return;
+    bound.add(control);
+    control.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'touch') showTip(control, term);
+    });
+    control.addEventListener('pointerleave', () => {
+      if (document.activeElement !== control) hideTip(control);
+    });
+    control.addEventListener('focus', () => showTip(control, term));
+    control.addEventListener('blur', () => hideTip(control));
+  }
   function decorateHeaders() {
     if (!active?.isConnected) hideTip();
     if (content.querySelector('#key')) return;
     content.querySelectorAll('table thead th').forEach(cell => {
-      if (cell.childElementCount) return;
-      const term = cell.textContent.trim();
+      const sort = cell.querySelector('button[data-sort_key]');
+      const term = sort?.dataset.sort_key || cell.textContent.trim();
       if (!terms.has(term)) return;
+      if (sort) {
+        bindTip(sort, term);
+        return;
+      }
+      if (cell.childElementCount) return;
       const link = document.createElement('a');
       link.href = '#key';
       link.className = 'stat_glossary_link';
       link.textContent = term;
-      link.addEventListener('pointerenter', event => {
-        if (event.pointerType !== 'touch') showTip(link, term);
-      });
-      link.addEventListener('pointerleave', () => {
-        if (document.activeElement !== link) hideTip(link);
-      });
-      link.addEventListener('focus', () => showTip(link, term));
-      link.addEventListener('blur', () => hideTip(link));
+      bindTip(link, term);
       link.addEventListener('click', event => {
         event.stopPropagation();
         hideTip(link);
