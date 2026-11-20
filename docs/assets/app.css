@@ -3499,3 +3499,18 @@ RESPONSIVE / MOBILE
     width: 28%;
   }
 }
+/* Dev snapshot and inline glossary */
+.today_snapshot { margin-bottom: 18px; }
+.today_snapshot .snapshot_note { color: var(--muted); margin: 0 0 12px; }
+.snapshot_grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+.snapshot_grid section { min-width: 0; }
+.snapshot_grid h4 { margin: 0 0 7px; }
+.snapshot_grid details { border: 1px solid var(--border); border-radius: 5px; margin-bottom: 6px; }
+.snapshot_grid summary { background: var(--panel); padding: 8px 10px; }
+.snapshot_grid summary span { color: var(--muted); margin-inline-start: 8px; }
+.snapshot_grid details p { margin: 0; padding: 6px 10px; }
+.snapshot_grid table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.snapshot_grid th, .snapshot_grid td { padding: 4px 10px; text-align: right; border-top: 1px solid var(--border); }
+.snapshot_grid th:first-child { text-align: left; }
+.stat_glossary_link { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+.stat_glossary_tip { position: fixed; z-index: 10000; width: max-content; max-width: min(300px, calc(100vw - 16px)); box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); white-space: normal; pointer-events: none; font-size: 13px; }

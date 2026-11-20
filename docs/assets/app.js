@@ -6132,6 +6132,9 @@ async function fetch_matchups_for_date(date_str) {
     const home_p = remove_accents(g?.teams?.home?.probablePitcher?.fullName || '');
 
     out.push({
+      game_id: g.gamePk,
+      game_number: Number(g.gameNumber) || 1,
+      doubleheader: g.doubleHeader === 'Y' || g.doubleHeader === 'S',
       home_team,
       away_team,
       home_pitcher: home_p,
@@ -7846,6 +7849,7 @@ function infer_matchup_link_roles(header, explicit_role, explicit_pitcher_role) 
     const keep_all_pitch_cols = !!options.keep_all_pitch_cols;
 
     const rows = [];
+    const rendered_overrides = [];
     let header = null;
 
     const link_year = String(
@@ -7869,7 +7873,7 @@ function infer_matchup_link_roles(header, explicit_role, explicit_pitcher_role) 
       matchup_streak_lookup = null;
     }
 
-    for (const p of (paths || [])) {
+    for (const [path_index, p] of (paths || []).entries()) {
       if (!p) continue;
 
       const html = await load_matchup_fragment(p);
@@ -7879,7 +7883,10 @@ function infer_matchup_link_roles(header, explicit_role, explicit_pitcher_role) 
       if (!parts) continue;
 
       if (!header && parts.header_cells.length) header = parts.header_cells;
-      if (parts.row_cells.length) rows.push(parts.row_cells);
+      if (parts.row_cells.length) {
+        rows.push(parts.row_cells);
+        rendered_overrides.push(override_rows[path_index]);
+      }
     }
 
     if ((!header || !rows.length) && dummy_rows.length) {
@@ -7962,14 +7969,19 @@ function infer_matchup_link_roles(header, explicit_role, explicit_pitcher_role) 
       rows[k] = keep_idx.map(i => r[i]);
     });
 
+    if (rendered_overrides.some(row => row?.Game != null)) {
+      header.push('Game');
+      rows.forEach(row => row.push('—'));
+    }
+
     if (override_rows.length) {
       rows.forEach((r, row_idx) => {
-        const override = override_rows[row_idx] || null;
+        const override = (rendered_overrides.length ? rendered_overrides : override_rows)[row_idx] || null;
         if (!override || typeof override !== 'object') return;
 
         header.forEach((col_name, col_idx) => {
           if (Object.prototype.hasOwnProperty.call(override, col_name)) {
-            r[col_idx] = override[col_name];
+            if (col_name !== 'Game' || override[col_name] != null) r[col_idx] = override[col_name];
           }
         });
       });
@@ -9956,15 +9968,6 @@ function find_fragment_key_loose(obj, wanted_name) {
       return out;
     }
     //#################
-    function find_game_for_team(games, team_code) {
-      const t = normalize_matchups_team_code(team_code);
-      return (games || []).find(g => {
-        return (
-          normalize_matchups_team_code(g.home_team) === t ||
-          normalize_matchups_team_code(g.away_team) === t
-        );
-      }) || null;
-    }
     //#################
     function matchup_info_for_team_game(game, team_code) {
       const t = normalize_matchups_team_code(team_code);
@@ -11035,64 +11038,71 @@ async function submit() {
     const hitter_team = String(get_hitter_team_map()[hitter_name] || '').trim();
     if (!hitter_team) continue;
 
-    const game = find_game_for_team(games, hitter_team);
-    if (!game) continue;
+    for (const game of games) {
+      const matchup_info = matchup_info_for_team_game(game, hitter_team);
+      if (!matchup_info) continue;
 
-    const matchup_info = matchup_info_for_team_game(game, hitter_team);
-    if (!matchup_info) continue;
-
-    const path = resolve_hvp_with_pf_fallback(
-      idx,
-      y,
-      hitter_name,
-      matchup_info.side,
-      matchup_info.pitcher
-    );
-
-    if (path) {
-      const dedupe_key = [
+      const path = resolve_hvp_with_pf_fallback(
+        idx,
+        y,
         hitter_name,
         matchup_info.side,
+        matchup_info.pitcher
+      );
+
+      if (path) {
+        const dedupe_key = [
+          hitter_name,
+          game.game_id,
+          matchup_info.side,
+          matchup_info.opp,
+          matchup_info.pitcher,
+          path
+        ].join('||');
+
+        if (seen_matchup_keys.has(dedupe_key)) continue;
+        seen_matchup_keys.add(dedupe_key);
+
+        matchup_paths.push(path);
+        matchup_override_rows.push({
+          Game: game.doubleheader ? game.game_number : null,
+          Away: matchup_info.side
+        });
+        continue;
+      }
+
+      const fallback_key = [
+        hitter_name,
+        game.game_id,
+        matchup_info.side,
         matchup_info.opp,
-        matchup_info.pitcher,
-        path
+        matchup_info.pitcher
       ].join('||');
 
-      if (seen_matchup_keys.has(dedupe_key)) continue;
-      seen_matchup_keys.add(dedupe_key);
+      if (seen_fallback_keys.has(fallback_key)) continue;
+      seen_fallback_keys.add(fallback_key);
 
-      matchup_paths.push(path);
-      matchup_override_rows.push({
-        Away: matchup_info.side
+      const lineup_sections = await build_lineup_sections(
+        idx,
+        year_lists,
+        y,
+        [hitter_name],
+        matchup_info.side,
+        matchup_info.pitcher,
+        '',
+        "No matchup data - these are scores against pitchers from this side (or All pitches)"
+      );
+
+      (lineup_sections || []).forEach(sec => {
+        const rows = sec.opts?.dummy_rows || [];
+        if (rows.length) {
+          sec.opts.dummy_rows = rows.map(row => enrich_dummy_row(row, [
+            { header: 'Game', value: game.doubleheader ? game.game_number : '—' }
+          ]));
+          fallback_sections.push(sec);
+        }
       });
-      continue;
     }
-
-    const fallback_key = [
-      hitter_name,
-      matchup_info.side,
-      matchup_info.opp,
-      matchup_info.pitcher
-    ].join('||');
-
-    if (seen_fallback_keys.has(fallback_key)) continue;
-    seen_fallback_keys.add(fallback_key);
-
-    const lineup_sections = await build_lineup_sections(
-      idx,
-      year_lists,
-      y,
-      [hitter_name],
-      matchup_info.side,
-      matchup_info.pitcher,
-      '',
-      "No matchup data - these are scores against pitchers from this side (or All pitches)"
-    );
-
-    (lineup_sections || []).forEach(sec => {
-      const has_dummy = !!(sec.opts && Array.isArray(sec.opts.dummy_rows) && sec.opts.dummy_rows.length);
-      if (has_dummy) fallback_sections.push(sec);
-    });
   }
 
   clear_results();
@@ -11292,66 +11302,67 @@ write_matchups_url_state({ rows: url_rows });
       const hitter_team = String(get_hitter_team_map()[hitter_name] || '').trim();
       if (!hitter_team) continue;
 
-      const game = find_game_for_team(games, hitter_team);
-      if (!game) continue;
+      for (const game of games) {
+        const matchup_info = matchup_info_for_team_game(game, hitter_team);
+        if (!matchup_info) continue;
 
-      const matchup_info = matchup_info_for_team_game(game, hitter_team);
-      if (!matchup_info) continue;
-
-      const path = resolve_hvp_with_pf_fallback(
-        idx,
-        y,
-        hitter_name,
-        matchup_info.side,
-        matchup_info.pitcher
-      );
-
-      if (path) {
-        const dedupe_key = [
+        const path = resolve_hvp_with_pf_fallback(
+          idx,
+          y,
           hitter_name,
           matchup_info.side,
-          matchup_info.opp,
+          matchup_info.pitcher
+        );
+
+        if (path) {
+          const dedupe_key = [
+            hitter_name,
+            game.game_id,
+            matchup_info.side,
+            matchup_info.opp,
+            matchup_info.pitcher,
+            path
+          ].join('||');
+
+          if (seen_matchup_keys.has(dedupe_key)) continue;
+          seen_matchup_keys.add(dedupe_key);
+
+          matchup_paths.push(path);
+          matchup_override_rows.push({
+            Game: game.doubleheader ? game.game_number : null,
+            Away: matchup_info.side
+          });
+          continue;
+        }
+
+        const fallback_rows = build_personalized_hitter_fallback_rows(
+          year_lists,
+          [hitter_name],
           matchup_info.pitcher,
-          path
+          y
+        );
+
+        if (!fallback_rows.length) continue;
+
+        const fallback_key = [
+          hitter_name,
+          game.game_id,
+          matchup_info.side,
+          matchup_info.opp,
+          matchup_info.pitcher
         ].join('||');
 
-        if (seen_matchup_keys.has(dedupe_key)) continue;
-        seen_matchup_keys.add(dedupe_key);
+        if (seen_fallback_keys.has(fallback_key)) continue;
+        seen_fallback_keys.add(fallback_key);
 
-        matchup_paths.push(path);
-        matchup_override_rows.push({
-          Away: matchup_info.side
-        });
-        continue;
+          fallback_dummy_rows.push(
+            enrich_dummy_row(reorder_week_fallback_dummy_row(fallback_rows[0], {
+              Away: matchup_info.side,
+              Opp: matchup_info.opp,
+              Pitcher: matchup_info.pitcher
+            }), [{ header: 'Game', value: game.doubleheader ? game.game_number : '—' }])
+          );
       }
-
-      const fallback_rows = build_personalized_hitter_fallback_rows(
-        year_lists,
-        [hitter_name],
-        matchup_info.pitcher,
-        y
-      );
-
-      if (!fallback_rows.length) continue;
-
-      const fallback_key = [
-        hitter_name,
-        matchup_info.side,
-        matchup_info.opp,
-        matchup_info.pitcher
-      ].join('||');
-
-      if (seen_fallback_keys.has(fallback_key)) continue;
-      seen_fallback_keys.add(fallback_key);
-
-        fallback_dummy_rows.push(
-          reorder_week_fallback_dummy_row(fallback_rows[0], {
-            Away: matchup_info.side,
-            Opp: matchup_info.opp,
-            Pitcher: matchup_info.pitcher,
-            Date: date_str
-          })
-        );
     }
 
     clear_results();
@@ -11440,58 +11451,59 @@ multi_form_state.weekly_fantasy_hitter_moves.n = clamp_rows_n(multi_form_state.w
         const date_str = String(day_pack?.date_str || '').trim();
         const games = Array.isArray(day_pack?.games) ? day_pack.games : [];
 
-        const game = find_game_for_team(games, hitter_team);
-        if (!game) continue;
+        for (const game of games) {
+          const matchup_info = matchup_info_for_team_game(game, hitter_team);
+          if (!matchup_info) continue;
 
-        const matchup_info = matchup_info_for_team_game(game, hitter_team);
-        if (!matchup_info) continue;
+          const game_key = [
+            date_str,
+            hitter_name,
+            game.game_id,
+            matchup_info.side,
+            matchup_info.opp,
+            matchup_info.pitcher
+          ].join('||');
 
-        const game_key = [
-          date_str,
-          hitter_name,
-          matchup_info.side,
-          matchup_info.opp,
-          matchup_info.pitcher
-        ].join('||');
+          if (seen_games.has(game_key)) continue;
+          seen_games.add(game_key);
 
-        if (seen_games.has(game_key)) continue;
-        seen_games.add(game_key);
+          const path = resolve_hvp_with_pf_fallback(
+            idx,
+            y,
+            hitter_name,
+            matchup_info.side,
+            matchup_info.pitcher
+          );
 
-        const path = resolve_hvp_with_pf_fallback(
-          idx,
-          y,
-          hitter_name,
-          matchup_info.side,
-          matchup_info.pitcher
-        );
+          if (path) {
+            matchup_paths.push(path);
+            matchup_override_rows.push({
+              Game: game.doubleheader ? game.game_number : null,
+              Away: matchup_info.side,
+              Opp: matchup_info.opp,
+              Pitcher: matchup_info.pitcher
+            });
+            continue;
+          }
 
-        if (path) {
-          matchup_paths.push(path);
-          matchup_override_rows.push({
-            Away: matchup_info.side,
-            Opp: matchup_info.opp,
-            Pitcher: matchup_info.pitcher
-          });
-          continue;
+          const fallback_rows = build_personalized_hitter_fallback_rows(
+            year_lists,
+            [hitter_name],
+            matchup_info.pitcher,
+            y
+          );
+
+          if (!fallback_rows.length) continue;
+
+          fallback_dummy_rows.push(
+            enrich_dummy_row(fallback_rows[0], [
+              { header: 'Game', value: game.doubleheader ? game.game_number : '—' },
+              { header: 'Away', value: matchup_info.side },
+              { header: 'Opp', value: matchup_info.opp },
+              { header: 'Pitcher', value: matchup_info.pitcher }
+            ])
+          );
         }
-
-        const fallback_rows = build_personalized_hitter_fallback_rows(
-          year_lists,
-          [hitter_name],
-          matchup_info.pitcher,
-          y
-        );
-
-        if (!fallback_rows.length) continue;
-
-        fallback_dummy_rows.push(
-          enrich_dummy_row(fallback_rows[0], [
-            // { header: 'Date', value: date_str },
-            { header: 'Away', value: matchup_info.side },
-            { header: 'Opp', value: matchup_info.opp },
-            { header: 'Pitcher', value: matchup_info.pitcher }
-          ])
-        );
       }
 
       if (matchup_paths.length || fallback_dummy_rows.length) {
