@@ -1,44 +1,23 @@
 <div class="player_page">
 <div class="player_header"><div class="player_name">Home</div></div>
 <div class="static_page">
-  <section class="today_snapshot" aria-labelledby="today_snapshot_heading">
-    <h3 id="today_snapshot_heading">Today's MLB Snapshot</h3>
-    <p class="snapshot_note">Dev preview · Example games, forecasts, and standings · Times in CT</p>
-    <div class="snapshot_grid">
-      <section aria-labelledby="snapshot_games">
-        <h4 id="snapshot_games">Today's Games</h4>
-        <details open>
-          <summary><strong>SEA at CHC</strong><span>1:20 PM · Scheduled</span></summary>
-          <p>Probable pitchers: Logan Gilbert vs. Shota Imanaga</p>
-          <p><strong>Wrigley Field</strong> · 68°F · Wind out to center, 12 mph · 10% chance of rain</p>
-        </details>
-        <details>
-          <summary><strong>TEX at HOU</strong><span>7:10 PM · Scheduled</span></summary>
-          <p><strong>Daikin Park</strong> · Roof status pending</p>
-        </details>
-        <details>
-          <summary><strong>LAA at ATH</strong><span>8:05 PM · Scheduled</span></summary>
-          <p>Probable pitchers TBD · Forecast unavailable</p>
-        </details>
-      </section>
-      <section aria-labelledby="snapshot_standings">
-        <h4 id="snapshot_standings">Division Standings</h4>
-        <details open><summary><strong>AL West</strong></summary>
-          <table aria-label="Example AL West standings">
-            <thead><tr><th scope="col">Team</th><th scope="col">W</th><th scope="col">L</th><th scope="col">GB</th></tr></thead>
-            <tbody>
-              <tr><th scope="row">SEA</th><td>47</td><td>33</td><td>—</td></tr>
-              <tr><th scope="row">HOU</th><td>44</td><td>36</td><td>3</td></tr>
-              <tr><th scope="row">TEX</th><td>41</td><td>39</td><td>6</td></tr>
-              <tr><th scope="row">ATH</th><td>38</td><td>42</td><td>9</td></tr>
-              <tr><th scope="row">LAA</th><td>34</td><td>46</td><td>13</td></tr>
-            </tbody>
-          </table>
-        </details>
-      </section>
-    </div>
-  </section>
-  <p>Welcome to my dashboard!</p>
+  <p>Welcome to my dashboard! <a href="#today">See today's MLB snapshot</a> for games, starting pitchers, and standings.</p>
+  <details class="home_tutorial">
+    <summary>Save a player to Favorites or Watchlist</summary>
+    <ol>
+      <li>Search for a player or find them in a team's depth chart.</li>
+      <li>Open their player page and use Favorites for players you want in daily projections, or Watchlist for players you want to keep an eye on.</li>
+      <li>Find them again in the sidebar's Favorites or Watchlist. These lists are saved in this browser.</li>
+    </ol>
+  </details>
+  <details class="home_tutorial">
+    <summary>Check today's matchups</summary>
+    <ol>
+      <li>Open <a href="#today">Today's MLB Snapshot</a> for the game and probable starters.</li>
+      <li>Open <a href="#matchups">Matchups/Projections</a> and choose <strong>Project Today's Favorited Players</strong> to see your saved players.</li>
+      <li>Click <strong>Submit</strong>. Start with Score, then look at the pitch columns if you want to see what drives it.</li>
+    </ol>
+  </details>
   <p>I made up a bunch of heuristics to help me win in fantasy, and it's led to a 1st and a close 3rd place finish in the years I've used it, and I'm currently in first (TBD!). It's focused on hard contact from hitters (and so it may disproportionately rag on guys like Luis Arraez), and all-around pitcher profiles with an emphasis on swing-and-miss/strikes.</p>
   <p>Some of the values don't make any sense conversationally, but the bars and colors are based on my own measuring of league averages and highs and lows. So you may see '-30% consistency' for a pitcher and think 'what does that mean?' and the important thing is its relative position, though the explanation is in the key as well.</p>
   <p>To easily check matchups for your fantasy team, add them all to Favorites and then go to Matchups --> Project Today's Favorited Players --> Submit</p>

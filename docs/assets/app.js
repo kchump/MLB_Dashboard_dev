@@ -4186,6 +4186,7 @@ async function load_page(file, page_id) {
     });
   });
 
+  init_today_snapshot(content);
   init_matchups_page_if_present(content);
   init_fantasy_page_if_present(content);
   init_fantasy_trends_page_if_present(content);
@@ -4730,6 +4731,13 @@ function wrap_player_page_scroll_shell(root) {
     inner.className = 'player_page_inner';
 
     kids.forEach(node => inner.appendChild(node));
+    const first_chart = inner.querySelector(':scope > div > .plotly-graph-div');
+    if (first_chart) {
+      const hint = document.createElement('p');
+      hint.className = 'mobile_chart_hint';
+      hint.textContent = 'Swipe across the chart to see more stats.';
+      first_chart.parentElement.before(hint);
+    }
     scroll.appendChild(inner);
     page.appendChild(scroll);
   });
@@ -5889,8 +5897,16 @@ function set_sidebar_hidden(hidden) {
       hidden ? 'Show sidebar' : 'Hide sidebar'
     );
     toggle_sidebar_btn.title = hidden ? 'Show sidebar' : 'Hide sidebar';
+    toggle_sidebar_btn.setAttribute('aria-expanded', String(!hidden));
   }
 }
+
+// Keep the page in view on phones. Search and team navigation stay one tap away.
+const mobile_sidebar = window.matchMedia('(max-width: 900px)');
+if (mobile_sidebar.matches) set_sidebar_hidden(true);
+sidebar?.addEventListener('click', event => {
+  if (mobile_sidebar.matches && event.target.closest('a.toc_link')) set_sidebar_hidden(true);
+});
 
 if (toggle_sidebar_btn) {
   toggle_sidebar_btn.addEventListener('click', () => {
@@ -6145,6 +6161,372 @@ async function fetch_matchups_for_date(date_str) {
   return out;
 }
 //#################
+//====================================================================
+// MATCHUP NUMBERS AND COLORS
+//====================================================================
+  function parse_matchup_stat_number(s) {
+    const raw = String(s || '').trim();
+    if (!raw) return NaN;
+
+    const x = raw.replace(/,/g, '');
+    const m = x.match(/-?(?:\d+(?:\.\d*)?|\.\d+)/);
+    return m ? Number(m[0]) : NaN;
+  }
+  //#################
+  function header_index(header, name) {
+    return (header || []).findIndex(h => String(h || '').trim() === String(name || '').trim());
+  }
+  //#################
+  function row_sample_alpha_mult(header, row_cells, opts) {
+    const options = (opts && typeof opts === 'object') ? opts : {};
+
+    const idx_pa = header_index(header, 'PA');
+    if (idx_pa >= 0) {
+      const pa = parse_matchup_stat_number(row_cells[idx_pa]);
+      if (Number.isFinite(pa)) {
+        const t = clamp(pa / 100, 0, 1);
+        return 0.25 + 0.75 * (t ** 2);
+      }
+    }
+
+    const idx_ip = header_index(header, 'IP');
+    if (idx_ip >= 0) {
+      const ip = parse_matchup_stat_number(row_cells[idx_ip]);
+      if (Number.isFinite(ip)) {
+        const thresh = options.invert_stats ? 15 : 30;
+        const t = clamp(ip / thresh, 0, 1);
+        return 0.25 + 0.75 * (t ** 2);
+      }
+    }
+
+    return 1;
+  }
+  //#################
+  function clamp(x, lo, hi) {
+    return Math.max(lo, Math.min(hi, x));
+  }
+  //#################
+function parse_matchup_rgba(fill) {
+  const s = String(fill || '').trim();
+
+  let m = s.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/i);
+  if (m) {
+    return {
+      r: Number(m[1]),
+      g: Number(m[2]),
+      b: Number(m[3]),
+      a: m[4] == null ? 1 : Number(m[4]),
+    };
+  }
+
+  m = s.match(/^#([0-9a-f]{6})$/i);
+  if (m) {
+    const h = m[1];
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+      a: 1,
+    };
+  }
+
+  return null;
+}
+//#################
+function matchup_table_base_rgb() {
+  const is_dark = document.body.classList.contains('soft_theme');
+
+  return is_dark
+    ? { r: 48, g: 56, b: 64 }
+    : { r: 255, g: 255, b: 255 };
+}
+//#################
+// function matchup_heat_text_color(fill) {
+//   const c = parse_matchup_rgba(fill);
+//   if (!c || c.a === 0) return '';
+
+//   const base = matchup_table_base_rgb();
+//   const a = clamp(c.a == null ? 1 : c.a, 0, 1);
+
+//   const mixed = {
+//     r: (c.r * a) + (base.r * (1 - a)),
+//     g: (c.g * a) + (base.g * (1 - a)),
+//     b: (c.b * a) + (base.b * (1 - a)),
+//   };
+
+//   const lum = (0.2126 * mixed.r) + (0.7152 * mixed.g) + (0.0722 * mixed.b);
+
+//   return lum < 145 ? '#ffffff' : '#000000';
+// }
+function matchup_heat_text_color(fill) {
+  const c = parse_matchup_rgba(fill);
+  if (!c || c.a === 0) return '';
+
+  const gold_like = (
+    c.r >= 180 &&
+    c.g >= 125 &&
+    c.b <= 95 &&
+    (c.r - c.b >= 65) &&
+    (c.g - c.b >= 30)
+  );
+
+  return gold_like ? '#000000' : '#ffffff';
+}
+  //#################
+// function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best, alpha_mult = 1) {
+//   const val = Number(v);
+//   if (!Number.isFinite(val)) return '';
+
+//   const lo = Math.min(worst, best);
+//   const hi = Math.max(worst, best);
+//   const vv = clamp(val, lo, hi);
+
+//   const nlo = Math.min(neutral_lo, neutral_hi);
+//   const nhi = Math.max(neutral_lo, neutral_hi);
+
+//   if (vv >= nlo && vv <= nhi) return '';
+
+//   const frac = (vv - worst) / (best - worst);
+//   const f = clamp(frac, 0, 1);
+
+//   const alpha_min = 0.25;
+//   const alpha_max = 0.95;
+//   const alpha_curve_pow = 0.40;
+
+//   const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
+//   let a = alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow);
+//   a = clamp(a * Number(alpha_mult || 1), 0, 1);
+
+//   if (f > 0.5) return `rgba(210, 35, 35,${a.toFixed(3)})`;
+
+//   return `rgba(35, 85, 210,${a.toFixed(3)})`;
+// }
+function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best, alpha_mult = 1) {
+  const val = Number(v);
+  if (!Number.isFinite(val)) return '';
+
+  const lo = Math.min(worst, best);
+  const hi = Math.max(worst, best);
+  const vv = clamp(val, lo, hi);
+
+  const nlo = Math.min(neutral_lo, neutral_hi);
+  const nhi = Math.max(neutral_lo, neutral_hi);
+
+  if (vv >= nlo && vv <= nhi) return '';
+
+  let f;
+
+  if (vv < nlo) {
+    const frac = (vv - worst) / (nlo - worst);
+    f = 0.5 * clamp(frac, 0, 1);
+  } else {
+    const frac = (vv - nhi) / (best - nhi);
+    f = 0.5 + (0.5 * clamp(frac, 0, 1));
+  }
+
+  const alpha_min = 0.25;
+  const alpha_max = 0.95;
+  const alpha_curve_pow = 0.40;
+
+  const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
+  const strength = clamp(
+    (alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow)) * Number(alpha_mult || 1),
+    0,
+    1
+  );
+
+  const color = f > 0.5
+    ? { r: 210, g: 35, b: 35 }
+    : { r: 35, g: 85, b: 210 };
+
+  const fade_target = { r: 245, g: 247, b: 250 };
+
+  const mixed = {
+    r: Math.round((color.r * strength) + (fade_target.r * (1 - strength))),
+    g: Math.round((color.g * strength) + (fade_target.g * (1 - strength))),
+    b: Math.round((color.b * strength) + (fade_target.b * (1 - strength))),
+  };
+
+  return `rgb(${mixed.r},${mixed.g},${mixed.b})`;
+}
+  //#################
+// function gold_gradient_fill(alpha_mult = 1) {
+//   const a = clamp(Number(alpha_mult || 1), 0, 1);
+
+//   // return `linear-gradient(
+//   //   90deg,
+//   //   rgba(249,242,149,${a.toFixed(3)}) 0%,
+//   //   rgba(224,170,62,${a.toFixed(3)}) 33%,
+//   //   rgba(250,243,152,${a.toFixed(3)}) 66%,
+//   //   rgba(184,138,68,${a.toFixed(3)}) 100%
+//   // )`;
+// return `linear-gradient(
+//   90deg,
+//   rgba(249,242,149,${a.toFixed(3)}) 0%,
+//   rgba(224,170,62,${a.toFixed(3)}) 100%
+// )`;
+// }
+function gold_gradient_fill(alpha_mult = 1) {
+  const strength = clamp(Number(alpha_mult || 1), 0, 1);
+  const fade_target = { r: 245, g: 247, b: 250 };
+
+  function mix(c) {
+    return {
+      r: Math.round((c.r * strength) + (fade_target.r * (1 - strength))),
+      g: Math.round((c.g * strength) + (fade_target.g * (1 - strength))),
+      b: Math.round((c.b * strength) + (fade_target.b * (1 - strength))),
+    };
+  }
+
+  const c1 = mix({ r: 249, g: 242, b: 149 });
+  const c2 = mix({ r: 224, g: 170, b: 62 });
+
+  return `linear-gradient(
+    90deg,
+    rgb(${c1.r},${c1.g},${c1.b}) 0%,
+    rgb(${c2.r},${c2.g},${c2.b}) 100%
+  )`;
+}
+  //#################
+function matchup_gold_threshold(header_text, gold_mode) { //makes stuff gold based on pitcher and hitter thresholds
+  const h = String(header_text || '').trim();
+  const mode = String(gold_mode || '').trim();
+
+  const is_hitter_mode = mode === 'hitter';
+  const is_pitcher_mode = !is_hitter_mode;
+
+  if (h === 'Score' || h === '+All' || h === 'All' || h === 'RHP' || h === 'LHP' || h === 'RHB' || h === 'LHB') {
+    return is_hitter_mode ? 100 : 50;
+  }
+
+  if ([
+    '+FB', '+SI', '+CT', '+SL', '+SW', '+CB', '+CH', '+SP', '+KN',
+    'FB', 'SI', 'CT', 'SL', 'SW', 'CB', 'CH', 'SP', 'KN'
+  ].includes(h)) {
+    return is_hitter_mode ? 100 : 70;
+  }
+
+  return Infinity;
+}
+  //#################
+
+//====================================================================
+// TODAY'S SNAPSHOT
+// The slate is a DEV example. Pull the actual Score from the same
+// pitcher-vs-team fragment Matchups uses, without the big index.
+//====================================================================
+function init_today_snapshot(content) {
+  const snapshot = content.querySelector('.today_snapshot');
+  if (!snapshot) return;
+
+  const divisions = {
+    'AL East': ['NYY', 'BAL', 'BOS', 'TOR', 'TB'],
+    'AL Central': ['DET', 'CLE', 'KC', 'MIN', 'CHW'],
+    'AL West': ['SEA', 'HOU', 'TEX', 'ATH', 'LAA'],
+    'NL East': ['PHI', 'ATL', 'NYM', 'MIA', 'WAS'],
+    'NL Central': ['CHC', 'MIL', 'STL', 'CIN', 'PIT'],
+    'NL West': ['LAD', 'SD', 'SF', 'ARI', 'COL']
+  };
+  const records = [[47, 33], [44, 36], [41, 39], [38, 42], [34, 46]];
+  const slate = [
+    { away: 'SEA', home: 'CHC', time: '1:20 PM', pitchers: ['Logan Gilbert', 'Shota Imanaga'],
+      weather: 'Wrigley Field · 68°F · Wind out to center, 12 mph · 10% chance of rain' },
+    { away: 'TEX', home: 'HOU', time: '7:10 PM', pitchers: ['Jacob deGrom', 'Hunter Brown'],
+      weather: 'Daikin Park · Roof status pending' },
+    { away: 'LAA', home: 'ATH', time: '8:05 PM', pitchers: [],
+      weather: 'Forecast unavailable' }
+  ];
+  const photos = 'https://kchump.github.io/mlb_dashboard_player_photos/player_photos/';
+  const picker = snapshot.querySelector('#snapshot_division');
+  const standings = snapshot.querySelector('tbody');
+
+  function teamBadge(team) {
+    return '<span class="snapshot_team">' + team_logo_html(team) + '<strong>' + team + '</strong></span>';
+  }
+
+  function showDivision() {
+    standings.innerHTML = divisions[picker.value].map((team, i) => {
+      const [wins, losses] = records[i];
+      const [leadWins, leadLosses] = records[0];
+      const gamesBack = (leadWins - wins + losses - leadLosses) / 2;
+      return '<tr><th scope="row">' + teamBadge(team) + '</th><td>' + wins +
+        '</td><td>' + losses + '</td><td>' + (gamesBack || '—') + '</td></tr>';
+    }).join('');
+  }
+
+  async function showPitcherScore(cell, name, side, opponent) {
+    const path = 'assets/matchups/fragments/2026/sp_vs_team/' +
+      encodeURIComponent(name.replaceAll(' ', '_')) + '/' + side + '/' + opponent + '.html';
+    const html = await load_matchup_fragment(path);
+    if (!html || !cell.isConnected) return;
+    const fragment = new DOMParser().parseFromString(html, 'text/html');
+    const headers = [...fragment.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    const row = [...fragment.querySelectorAll('tbody tr:first-child td')].map(td => td.textContent.trim());
+    const raw = row[headers.indexOf('Score')];
+    const score = parse_matchup_stat_number(raw);
+    if (!Number.isFinite(score)) return;
+
+    const alpha = row_sample_alpha_mult(headers, row, {});
+    const gold = score >= matchup_gold_threshold('Score', 'pitcher');
+    const background = gold ? gold_gradient_fill(alpha) : rgba_from_two_sided_value(score, -40, -5, 5, 40, alpha);
+    cell.textContent = raw;
+    cell.style.background = background;
+    cell.style.color = gold ? '#171717' : matchup_heat_text_color(background);
+  }
+
+  Object.keys(divisions).forEach(division => picker.add(new Option(division)));
+  picker.value = 'AL West';
+  picker.addEventListener('change', showDivision);
+  showDivision();
+
+  const games = snapshot.querySelector('[data-snapshot-games]');
+  for (const [i, game] of slate.entries()) {
+    const card = document.createElement('details');
+    card.open = i === 0;
+    card.innerHTML = '<summary><span class="snapshot_matchup">' + teamBadge(game.away) +
+      '<span>at</span>' + teamBadge(game.home) + '</span><span class="snapshot_game_time">' +
+      game.time + ' · Scheduled</span></summary>';
+    if (game.pitchers.length) {
+      const table = document.createElement('table');
+      table.setAttribute('aria-label', game.away + ' at ' + game.home + ' probable pitchers');
+      table.innerHTML = '<thead><tr><th scope="col">Probable pitcher</th><th scope="col">Matchup Score</th></tr></thead><tbody></tbody>';
+      game.pitchers.forEach((name, index) => {
+        const row = table.tBodies[0].insertRow();
+        const side = index === 0 ? 'Away' : 'Home';
+        const team = index === 0 ? game.away : game.home;
+        const opponent = index === 0 ? game.home : game.away;
+        const player = document.createElement('th');
+        player.scope = 'row';
+        const link = document.createElement('a');
+        link.className = 'snapshot_pitcher';
+        link.href = '#' + team + '-starters-' + name.toLowerCase().replaceAll(' ', '-');
+        const photo = document.createElement('img');
+        photo.alt = '';
+        photo.loading = 'lazy';
+        photo.width = 33;
+        photo.height = 33;
+        photo.src = photos + name.toLowerCase().replaceAll(' ', '_') + '.png';
+        photo.addEventListener('error', () => photo.remove(), { once: true });
+        link.append(photo, document.createTextNode(name));
+        player.append(link);
+        row.append(player);
+        const cell = row.insertCell();
+        cell.className = 'snapshot_score';
+        cell.textContent = '—';
+        showPitcherScore(cell, name, side, opponent);
+      });
+      card.append(table);
+    } else {
+      const status = document.createElement('p');
+      status.textContent = 'Probable pitchers TBD';
+      card.append(status);
+    }
+    const forecast = document.createElement('p');
+    forecast.textContent = game.weather;
+    card.append(forecast);
+    games.append(card);
+  }
+}
 function team_logo_html(team) {
   const t = normalize_matchups_team_code(team);
   if (!t) return '';
@@ -7306,15 +7688,6 @@ rows_plus.addEventListener('click', (e) => {
     results_root.innerHTML = '';
   }
   //#################
-  function parse_matchup_stat_number(s) {
-    const raw = String(s || '').trim();
-    if (!raw) return NaN;
-
-    const x = raw.replace(/,/g, '');
-    const m = x.match(/-?(?:\d+(?:\.\d*)?|\.\d+)/);
-    return m ? Number(m[0]) : NaN;
-  }
-  //#################
   function matchup_display_header(h) {
     const s = String(h || '').trim();
 
@@ -7355,242 +7728,6 @@ rows_plus.addEventListener('click', (e) => {
 
     return '80px';
   }
-  //#################
-  function header_index(header, name) {
-    return (header || []).findIndex(h => String(h || '').trim() === String(name || '').trim());
-  }
-  //#################
-  function row_sample_alpha_mult(header, row_cells, opts) {
-    const options = (opts && typeof opts === 'object') ? opts : {};
-
-    const idx_pa = header_index(header, 'PA');
-    if (idx_pa >= 0) {
-      const pa = parse_matchup_stat_number(row_cells[idx_pa]);
-      if (Number.isFinite(pa)) {
-        const t = clamp(pa / 100, 0, 1);
-        return 0.25 + 0.75 * (t ** 2);
-      }
-    }
-
-    const idx_ip = header_index(header, 'IP');
-    if (idx_ip >= 0) {
-      const ip = parse_matchup_stat_number(row_cells[idx_ip]);
-      if (Number.isFinite(ip)) {
-        const thresh = options.invert_stats ? 15 : 30;
-        const t = clamp(ip / thresh, 0, 1);
-        return 0.25 + 0.75 * (t ** 2);
-      }
-    }
-
-    return 1;
-  }
-  //#################
-  function clamp(x, lo, hi) {
-    return Math.max(lo, Math.min(hi, x));
-  }
-  //#################
-function parse_matchup_rgba(fill) {
-  const s = String(fill || '').trim();
-
-  let m = s.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/i);
-  if (m) {
-    return {
-      r: Number(m[1]),
-      g: Number(m[2]),
-      b: Number(m[3]),
-      a: m[4] == null ? 1 : Number(m[4]),
-    };
-  }
-
-  m = s.match(/^#([0-9a-f]{6})$/i);
-  if (m) {
-    const h = m[1];
-    return {
-      r: parseInt(h.slice(0, 2), 16),
-      g: parseInt(h.slice(2, 4), 16),
-      b: parseInt(h.slice(4, 6), 16),
-      a: 1,
-    };
-  }
-
-  return null;
-}
-//#################
-function matchup_table_base_rgb() {
-  const is_dark = document.body.classList.contains('soft_theme');
-
-  return is_dark
-    ? { r: 48, g: 56, b: 64 }
-    : { r: 255, g: 255, b: 255 };
-}
-//#################
-// function matchup_heat_text_color(fill) {
-//   const c = parse_matchup_rgba(fill);
-//   if (!c || c.a === 0) return '';
-
-//   const base = matchup_table_base_rgb();
-//   const a = clamp(c.a == null ? 1 : c.a, 0, 1);
-
-//   const mixed = {
-//     r: (c.r * a) + (base.r * (1 - a)),
-//     g: (c.g * a) + (base.g * (1 - a)),
-//     b: (c.b * a) + (base.b * (1 - a)),
-//   };
-
-//   const lum = (0.2126 * mixed.r) + (0.7152 * mixed.g) + (0.0722 * mixed.b);
-
-//   return lum < 145 ? '#ffffff' : '#000000';
-// }
-function matchup_heat_text_color(fill) {
-  const c = parse_matchup_rgba(fill);
-  if (!c || c.a === 0) return '';
-
-  const gold_like = (
-    c.r >= 180 &&
-    c.g >= 125 &&
-    c.b <= 95 &&
-    (c.r - c.b >= 65) &&
-    (c.g - c.b >= 30)
-  );
-
-  return gold_like ? '#000000' : '#ffffff';
-}
-  //#################
-// function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best, alpha_mult = 1) {
-//   const val = Number(v);
-//   if (!Number.isFinite(val)) return '';
-
-//   const lo = Math.min(worst, best);
-//   const hi = Math.max(worst, best);
-//   const vv = clamp(val, lo, hi);
-
-//   const nlo = Math.min(neutral_lo, neutral_hi);
-//   const nhi = Math.max(neutral_lo, neutral_hi);
-
-//   if (vv >= nlo && vv <= nhi) return '';
-
-//   const frac = (vv - worst) / (best - worst);
-//   const f = clamp(frac, 0, 1);
-
-//   const alpha_min = 0.25;
-//   const alpha_max = 0.95;
-//   const alpha_curve_pow = 0.40;
-
-//   const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
-//   let a = alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow);
-//   a = clamp(a * Number(alpha_mult || 1), 0, 1);
-
-//   if (f > 0.5) return `rgba(210, 35, 35,${a.toFixed(3)})`;
-
-//   return `rgba(35, 85, 210,${a.toFixed(3)})`;
-// }
-function rgba_from_two_sided_value(v, worst, neutral_lo, neutral_hi, best, alpha_mult = 1) {
-  const val = Number(v);
-  if (!Number.isFinite(val)) return '';
-
-  const lo = Math.min(worst, best);
-  const hi = Math.max(worst, best);
-  const vv = clamp(val, lo, hi);
-
-  const nlo = Math.min(neutral_lo, neutral_hi);
-  const nhi = Math.max(neutral_lo, neutral_hi);
-
-  if (vv >= nlo && vv <= nhi) return '';
-
-  let f;
-
-  if (vv < nlo) {
-    const frac = (vv - worst) / (nlo - worst);
-    f = 0.5 * clamp(frac, 0, 1);
-  } else {
-    const frac = (vv - nhi) / (best - nhi);
-    f = 0.5 + (0.5 * clamp(frac, 0, 1));
-  }
-
-  const alpha_min = 0.25;
-  const alpha_max = 0.95;
-  const alpha_curve_pow = 0.40;
-
-  const d = clamp(Math.abs(f - 0.5) * 2.0, 0, 1);
-  const strength = clamp(
-    (alpha_min + (alpha_max - alpha_min) * Math.pow(d, alpha_curve_pow)) * Number(alpha_mult || 1),
-    0,
-    1
-  );
-
-  const color = f > 0.5
-    ? { r: 210, g: 35, b: 35 }
-    : { r: 35, g: 85, b: 210 };
-
-  const fade_target = { r: 245, g: 247, b: 250 };
-
-  const mixed = {
-    r: Math.round((color.r * strength) + (fade_target.r * (1 - strength))),
-    g: Math.round((color.g * strength) + (fade_target.g * (1 - strength))),
-    b: Math.round((color.b * strength) + (fade_target.b * (1 - strength))),
-  };
-
-  return `rgb(${mixed.r},${mixed.g},${mixed.b})`;
-}
-  //#################
-// function gold_gradient_fill(alpha_mult = 1) {
-//   const a = clamp(Number(alpha_mult || 1), 0, 1);
-
-//   // return `linear-gradient(
-//   //   90deg,
-//   //   rgba(249,242,149,${a.toFixed(3)}) 0%,
-//   //   rgba(224,170,62,${a.toFixed(3)}) 33%,
-//   //   rgba(250,243,152,${a.toFixed(3)}) 66%,
-//   //   rgba(184,138,68,${a.toFixed(3)}) 100%
-//   // )`;
-// return `linear-gradient(
-//   90deg,
-//   rgba(249,242,149,${a.toFixed(3)}) 0%,
-//   rgba(224,170,62,${a.toFixed(3)}) 100%
-// )`;
-// }
-function gold_gradient_fill(alpha_mult = 1) {
-  const strength = clamp(Number(alpha_mult || 1), 0, 1);
-  const fade_target = { r: 245, g: 247, b: 250 };
-
-  function mix(c) {
-    return {
-      r: Math.round((c.r * strength) + (fade_target.r * (1 - strength))),
-      g: Math.round((c.g * strength) + (fade_target.g * (1 - strength))),
-      b: Math.round((c.b * strength) + (fade_target.b * (1 - strength))),
-    };
-  }
-
-  const c1 = mix({ r: 249, g: 242, b: 149 });
-  const c2 = mix({ r: 224, g: 170, b: 62 });
-
-  return `linear-gradient(
-    90deg,
-    rgb(${c1.r},${c1.g},${c1.b}) 0%,
-    rgb(${c2.r},${c2.g},${c2.b}) 100%
-  )`;
-}
-  //#################
-function matchup_gold_threshold(header_text, gold_mode) { //makes stuff gold based on pitcher and hitter thresholds
-  const h = String(header_text || '').trim();
-  const mode = String(gold_mode || '').trim();
-
-  const is_hitter_mode = mode === 'hitter';
-  const is_pitcher_mode = !is_hitter_mode;
-
-  if (h === 'Score' || h === '+All' || h === 'All' || h === 'RHP' || h === 'LHP' || h === 'RHB' || h === 'LHB') {
-    return is_hitter_mode ? 100 : 50;
-  }
-
-  if ([
-    '+FB', '+SI', '+CT', '+SL', '+SW', '+CB', '+CH', '+SP', '+KN',
-    'FB', 'SI', 'CT', 'SL', 'SW', 'CB', 'CH', 'SP', 'KN'
-  ].includes(h)) {
-    return is_hitter_mode ? 100 : 70;
-  }
-
-  return Infinity;
-}
   //#################
   function is_matchup_stat_col(header_text) {
     const h = String(header_text || '').trim();

@@ -1,0 +1,22 @@
+<div class="player_page" id="today" data-role="meta">
+  <div class="player_header"><div class="player_name">Today's MLB Snapshot</div></div>
+  <div class="static_page today_snapshot">
+    <p class="snapshot_note">DEV preview · Example slate, standings, and forecasts · Matchup scores from the 2026 dashboard · Times in CT</p>
+    <div class="snapshot_grid">
+      <section aria-labelledby="snapshot_games">
+        <h3 id="snapshot_games">Today's Games</h3>
+        <div data-snapshot-games></div>
+      </section>
+      <section aria-labelledby="snapshot_standings">
+        <h3 id="snapshot_standings">Division Standings</h3>
+        <label for="snapshot_division">Division</label>
+        <select id="snapshot_division"></select>
+        <table aria-label="Example division standings">
+          <thead><tr><th scope="col">Team</th><th scope="col" title="Wins">W</th><th scope="col" title="Losses">L</th><th scope="col" title="Games back">GB</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+    <p><a href="#matchups">Open Matchups/Projections</a> · <a href="#home">Read the matchup guide</a></p>
+  </div>
+</div>

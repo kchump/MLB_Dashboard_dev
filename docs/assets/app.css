@@ -3165,16 +3165,14 @@ RESPONSIVE / MOBILE
 @media (max-width: 900px) {
   :root {
     --sidebar-w: 100%;
-    --mobile_zoom: 0.82;
   }
 
   .app {
     flex-direction: column;
     height: auto;
-    min-height: calc(100vh / var(--mobile_zoom));
-    width: calc(100% / var(--mobile_zoom));
+    min-height: 100vh;
+    width: 100%;
     overflow: visible;
-    zoom: var(--mobile_zoom);
   }
 
   .sidebar {
@@ -3220,8 +3218,8 @@ RESPONSIVE / MOBILE
   }
 
   .player_page_inner {
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
+    min-width: 0;
   }
 
   .player_header_actions {
@@ -3516,8 +3514,34 @@ RESPONSIVE / MOBILE
 .stat_glossary_tip { position: fixed; z-index: 10000; width: max-content; max-width: min(300px, calc(100vw - 16px)); box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); color: var(--text); white-space: normal; pointer-events: none; font-size: 13px; }
 
 @media (max-width: 900px) {
-  .app:has(.today_snapshot) { --mobile_zoom: 1; }
-  .app:has(.today_snapshot) .content { box-sizing: border-box; }
-  .player_page:has(.today_snapshot) .player_page_inner { width: 100%; }
-  .player_page:has(.today_snapshot) .static_page { overflow-x: auto; }
+  .static_page { overflow-wrap: anywhere; }
+  .static_page:has(.home_tutorial) { overflow-x: auto; }
+  .player_name_row { flex-wrap: wrap; }
+  .player_page_scroll { overscroll-behavior-inline: contain; }
+  .compare_page input, .compare_page select, #matchups input, #matchups select { font-size: 16px; }
+  .home_tutorial summary, .snapshot_grid summary { min-height: 44px; box-sizing: border-box; align-content: center; }
+}
+
+/*====================================================================
+TODAY'S SNAPSHOT + HOME TUTORIALS
+====================================================================*/
+.snapshot_grid h3 { margin: 0 0 8px; }
+.snapshot_grid select { margin: 0 0 8px 6px; padding: 5px; background: var(--control_bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.snapshot_team, .snapshot_matchup, .snapshot_pitcher { display: inline-flex; gap: 6px; align-items: center; vertical-align: middle; }
+.snapshot_team img { width: 22px; height: 22px; object-fit: contain; }
+.snapshot_pitcher img { object-fit: contain; flex: 0 0 33px; }
+.snapshot_matchup span { margin-inline-start: 0; }
+.snapshot_score { font-weight: 700; }
+.home_tutorial { margin: 8px 0; }
+.home_tutorial summary { color: var(--text); font-weight: 700; }
+@media (max-width: 600px) {
+  .snapshot_game_time { display: block; margin: 4px 0 0 14px; }
+  .snapshot_grid select { font-size: 16px; min-height: 40px; }
+}
+
+.mobile_chart_hint { display: none; }
+@media (max-width: 900px) {
+  .mobile_chart_hint { display: block; color: var(--muted); margin: 10px 0 4px; font-size: 13px; }
+  .player_page_inner > div:has(> .plotly-graph-div) { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+  .trade_page input, .trade_page select { font-size: 16px; }
 }
