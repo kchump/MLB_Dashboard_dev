@@ -3268,36 +3268,25 @@ async function sync_compare_trade_own_pct(root) {
   );
 }
 /* ################# */
+// All three views use the same season file. Share the request and parsed rows.
 async function load_fantasy_year(year) {
   const y = String(year || '').trim();
   if (!y) return null;
+  if (fantasy_year_cache.has(y)) return fantasy_year_cache.get(y);
 
-  if (fantasy_year_cache.has(y)) {
-    return fantasy_year_cache.get(y);
-  }
-
-  try {
-    const r = await fetch(`assets/fantasy_${y}.json`, { cache: 'no-store' });
-    if (!r.ok) {
-      fantasy_year_cache.set(y, null);
-      return null;
+  const request = fetch(`assets/fantasy_${encodeURIComponent(y)}.json`, { cache: 'no-store' }).then(async response => {
+    if (!response.ok) return null;
+    const text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      // Older generated files can contain non-JSON numeric values.
+      return JSON.parse(text.replace(/"(?:[^"\\]|\\.)*"|-?\b(?:Infinity|Inf|NaN)\b/g,
+        token => token[0] === '"' ? token : 'null'));
     }
-
-    // const data = await r.json();
-    const text = await r.text();
-    const safe_text = text
-      .replace(/\b-Infinity\b/g, 'null')
-      .replace(/\bInfinity\b/g, 'null')
-      .replace(/\bInf\b/g, 'null')
-      .replace(/\bNaN\b/g, 'null');
-
-    const data = JSON.parse(safe_text);
-    fantasy_year_cache.set(y, data);
-    return data;
-  } catch (e) {
-    fantasy_year_cache.set(y, null);
-    return null;
-  }
+  }).catch(() => null);
+  fantasy_year_cache.set(y, request);
+  return request;
 }
 /* ################# */
 // function fantasy_role_section_priority(role) {
@@ -4110,39 +4099,84 @@ function set_team_collapsed(team, collapsed) {
   }
 }
 /*#################################################################### Content/page loading + activation (TOC + hash) ####################################################################*/
+//====================================================================
+// PAGE LOADING
+// Load Plotly once, when a page actually contains a chart.
+//====================================================================
+let plotly_request;
+let page_load_sequence = 0;
+function ensure_plotly_loaded() {
+  if (window.Plotly) return Promise.resolve();
+  if (!plotly_request) {
+    plotly_request = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'assets/plotly.min.js';
+      script.onload = resolve;
+      script.onerror = () => {
+        script.remove();
+        plotly_request = null;
+        reject(new Error('Plotly unavailable'));
+      };
+      document.head.append(script);
+    });
+  }
+  return plotly_request;
+}
+
 async function load_page(file, page_id) {
   const content = document.getElementById('content_root');
   if (!content) return;
 
+  const request = ++page_load_sequence;
   const pid = String(page_id || active_page_id || '').trim();
 
   content.innerHTML = '<div style="padding:12px;color:rgba(96,103,112,0.95);">Loading…</div>';
 
   let html = page_cache.get(file);
   if (!html) {
-    const r = await fetch(file);
-    html = await r.text();
-    page_cache.set(file, html);
+    try {
+      const r = await fetch(file);
+      if (!r.ok) throw new Error('Page unavailable');
+      html = await r.text();
+      page_cache.set(file, html);
+    } catch (error) {
+      if (request === page_load_sequence) content.textContent = 'This page could not load.';
+      return;
+    }
   }
 
-  // Pre-resolve year fallback BEFORE touching the live DOM to avoid flicker
-  await load_year_page_lookup();
-  await load_retired_players();
-  const fb = year_fallback_file_from_html(html, file);
-  if (fb && fb.file) {
-    year_fallback_notice_by_page.set(pid, {
-      last_played_year: String(fb.year || '').trim(),
-    });
-    await load_page(fb.file, pid);
-    return;
+  // The player year lookup can redirect to the last played season.
+  if (html.includes('year_buttons')) {
+    await Promise.all([load_year_page_lookup(), load_retired_players()]);
+    if (request !== page_load_sequence) return;
+    const fb = year_fallback_file_from_html(html, file);
+    if (fb && fb.file) {
+      year_fallback_notice_by_page.set(pid, {
+        last_played_year: String(fb.year || '').trim(),
+      });
+      await load_page(fb.file, pid);
+      return;
+    }
   }
-
+  let chartUnavailable = false;
+  if (html.includes('plotly-graph-div')) {
+    try {
+      await ensure_plotly_loaded();
+    } catch (error) {
+      chartUnavailable = true;
+    }
+  }
+  if (request !== page_load_sequence) return;
   content.innerHTML = html;
   active_content_file = file || '';
   active_page_id = pid || active_page_id || '';
 
   const scripts = Array.from(content.querySelectorAll('script'));
   scripts.forEach(old => {
+    if (chartUnavailable && old.textContent.includes('Plotly')) {
+      old.remove();
+      return;
+    }
     const s = document.createElement('script');
     if (old.type) s.type = old.type;
     if (old.src) {
@@ -4159,8 +4193,8 @@ async function load_page(file, page_id) {
 
   try { localStorage.setItem('mlb_dash_active_page', pid); } catch (e) {}
 
-  await load_year_page_lookup();
-  await render_year_select_in_content(content);
+  if (html.includes('year_buttons')) await render_year_select_in_content(content);
+  if (request !== page_load_sequence) return;
     wrap_player_page_scroll_shell(content);
   install_plotly_tick_popovers(content);
   const plots = Array.from(content.querySelectorAll('.js-plotly-plot'));
@@ -4187,6 +4221,7 @@ async function load_page(file, page_id) {
   });
 
   init_today_snapshot(content);
+  init_prospects(content);
   init_matchups_page_if_present(content);
   init_fantasy_page_if_present(content);
   init_fantasy_trends_page_if_present(content);
@@ -4204,7 +4239,6 @@ async function load_page(file, page_id) {
     bring_pct_markers_to_front(content);
   });
 
-  await sync_sidebar_streak_emojis(document);
   await render_favorites_sidebar();
   await render_watchlist_sidebar();
   await sync_sidebar_streak_emojis(document);
@@ -6124,15 +6158,34 @@ async function load_matchups_rosters() {
   }
 }
 //#################################################################### Select utils ####################################################################
-async function fetch_matchups_for_date(date_str) {
+//#################################################################### MLB schedule ####################################################################
+// Reuse an in-flight date request across controls, then refresh live data.
+const mlb_schedule_cache = new Map();
+function fetch_mlb_schedule_games(date_str) {
+  const now = Date.now();
+  const saved = mlb_schedule_cache.get(date_str);
+  if (saved && saved.expires > now) return saved.request;
+
   const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date_str)}&hydrate=probablePitcher`;
-
-  const r = await fetch(url, { cache:'no-store' });
-  if (!r.ok) return [];
-
-  const j = await r.json();
-  const games = (j.dates && j.dates[0] && Array.isArray(j.dates[0].games)) ? j.dates[0].games : [];
-
+  const entry = { expires: Infinity, request: null };
+  entry.request = fetch(url, { cache: 'no-store' }).then(async response => {
+    if (!response.ok) {
+      if (mlb_schedule_cache.get(date_str) === entry) mlb_schedule_cache.delete(date_str);
+      return [];
+    }
+    const data = await response.json();
+    entry.expires = Date.now() + 60_000;
+    return Array.isArray(data.dates?.[0]?.games) ? data.dates[0].games : [];
+  }).catch(error => {
+    if (mlb_schedule_cache.get(date_str) === entry) mlb_schedule_cache.delete(date_str);
+    throw error;
+  });
+  mlb_schedule_cache.set(date_str, entry);
+  return entry.request;
+}
+//#################
+async function fetch_matchups_for_date(date_str) {
+  const games = await fetch_mlb_schedule_games(date_str);
   const out = [];
 
   for (const g of games) {
@@ -6411,123 +6464,6 @@ function matchup_gold_threshold(header_text, gold_mode) { //makes stuff gold bas
 }
   //#################
 
-//====================================================================
-// TODAY'S SNAPSHOT
-// The slate is a DEV example. Pull the actual Score from the same
-// pitcher-vs-team fragment Matchups uses, without the big index.
-//====================================================================
-function init_today_snapshot(content) {
-  const snapshot = content.querySelector('.today_snapshot');
-  if (!snapshot) return;
-
-  const divisions = {
-    'AL East': ['NYY', 'BAL', 'BOS', 'TOR', 'TB'],
-    'AL Central': ['DET', 'CLE', 'KC', 'MIN', 'CHW'],
-    'AL West': ['SEA', 'HOU', 'TEX', 'ATH', 'LAA'],
-    'NL East': ['PHI', 'ATL', 'NYM', 'MIA', 'WAS'],
-    'NL Central': ['CHC', 'MIL', 'STL', 'CIN', 'PIT'],
-    'NL West': ['LAD', 'SD', 'SF', 'ARI', 'COL']
-  };
-  const records = [[47, 33], [44, 36], [41, 39], [38, 42], [34, 46]];
-  const slate = [
-    { away: 'SEA', home: 'CHC', time: '1:20 PM', pitchers: ['Logan Gilbert', 'Shota Imanaga'],
-      weather: 'Wrigley Field · 68°F · Wind out to center, 12 mph · 10% chance of rain' },
-    { away: 'TEX', home: 'HOU', time: '7:10 PM', pitchers: ['Jacob deGrom', 'Hunter Brown'],
-      weather: 'Daikin Park · Roof status pending' },
-    { away: 'LAA', home: 'ATH', time: '8:05 PM', pitchers: [],
-      weather: 'Forecast unavailable' }
-  ];
-  const photos = 'https://kchump.github.io/mlb_dashboard_player_photos/player_photos/';
-  const picker = snapshot.querySelector('#snapshot_division');
-  const standings = snapshot.querySelector('tbody');
-
-  function teamBadge(team) {
-    return '<span class="snapshot_team">' + team_logo_html(team) + '<strong>' + team + '</strong></span>';
-  }
-
-  function showDivision() {
-    standings.innerHTML = divisions[picker.value].map((team, i) => {
-      const [wins, losses] = records[i];
-      const [leadWins, leadLosses] = records[0];
-      const gamesBack = (leadWins - wins + losses - leadLosses) / 2;
-      return '<tr><th scope="row">' + teamBadge(team) + '</th><td>' + wins +
-        '</td><td>' + losses + '</td><td>' + (gamesBack || '—') + '</td></tr>';
-    }).join('');
-  }
-
-  async function showPitcherScore(cell, name, side, opponent) {
-    const path = 'assets/matchups/fragments/2026/sp_vs_team/' +
-      encodeURIComponent(name.replaceAll(' ', '_')) + '/' + side + '/' + opponent + '.html';
-    const html = await load_matchup_fragment(path);
-    if (!html || !cell.isConnected) return;
-    const fragment = new DOMParser().parseFromString(html, 'text/html');
-    const headers = [...fragment.querySelectorAll('thead th')].map(th => th.textContent.trim());
-    const row = [...fragment.querySelectorAll('tbody tr:first-child td')].map(td => td.textContent.trim());
-    const raw = row[headers.indexOf('Score')];
-    const score = parse_matchup_stat_number(raw);
-    if (!Number.isFinite(score)) return;
-
-    const alpha = row_sample_alpha_mult(headers, row, {});
-    const gold = score >= matchup_gold_threshold('Score', 'pitcher');
-    const background = gold ? gold_gradient_fill(alpha) : rgba_from_two_sided_value(score, -40, -5, 5, 40, alpha);
-    cell.textContent = raw;
-    cell.style.background = background;
-    cell.style.color = gold ? '#171717' : matchup_heat_text_color(background);
-  }
-
-  Object.keys(divisions).forEach(division => picker.add(new Option(division)));
-  picker.value = 'AL West';
-  picker.addEventListener('change', showDivision);
-  showDivision();
-
-  const games = snapshot.querySelector('[data-snapshot-games]');
-  for (const [i, game] of slate.entries()) {
-    const card = document.createElement('details');
-    card.open = i === 0;
-    card.innerHTML = '<summary><span class="snapshot_matchup">' + teamBadge(game.away) +
-      '<span>at</span>' + teamBadge(game.home) + '</span><span class="snapshot_game_time">' +
-      game.time + ' · Scheduled</span></summary>';
-    if (game.pitchers.length) {
-      const table = document.createElement('table');
-      table.setAttribute('aria-label', game.away + ' at ' + game.home + ' probable pitchers');
-      table.innerHTML = '<thead><tr><th scope="col">Probable pitcher</th><th scope="col">Matchup Score</th></tr></thead><tbody></tbody>';
-      game.pitchers.forEach((name, index) => {
-        const row = table.tBodies[0].insertRow();
-        const side = index === 0 ? 'Away' : 'Home';
-        const team = index === 0 ? game.away : game.home;
-        const opponent = index === 0 ? game.home : game.away;
-        const player = document.createElement('th');
-        player.scope = 'row';
-        const link = document.createElement('a');
-        link.className = 'snapshot_pitcher';
-        link.href = '#' + team + '-starters-' + name.toLowerCase().replaceAll(' ', '-');
-        const photo = document.createElement('img');
-        photo.alt = '';
-        photo.loading = 'lazy';
-        photo.width = 33;
-        photo.height = 33;
-        photo.src = photos + name.toLowerCase().replaceAll(' ', '_') + '.png';
-        photo.addEventListener('error', () => photo.remove(), { once: true });
-        link.append(photo, document.createTextNode(name));
-        player.append(link);
-        row.append(player);
-        const cell = row.insertCell();
-        cell.className = 'snapshot_score';
-        cell.textContent = '—';
-        showPitcherScore(cell, name, side, opponent);
-      });
-      card.append(table);
-    } else {
-      const status = document.createElement('p');
-      status.textContent = 'Probable pitchers TBD';
-      card.append(status);
-    }
-    const forecast = document.createElement('p');
-    forecast.textContent = game.weather;
-    card.append(forecast);
-    games.append(card);
-  }
-}
 function team_logo_html(team) {
   const t = normalize_matchups_team_code(team);
   if (!t) return '';
@@ -7068,21 +7004,15 @@ function resolve_fragment(idx, year, mode, keys) {
 //#################
 async function load_matchup_fragment(path) {
   if (!path) return null;
+  if (matchups_cache.has(path)) return matchups_cache.get(path);
 
-  const cached = matchups_cache.get(path);
-  if (cached) return cached;
-
-  try {
-    const r = await fetch(path, { cache: 'no-store' });
-    if (!r.ok) return null;
-
-    const html = await r.text();
-    matchups_cache.set(path, html);
-    return html;
-
-  } catch (e) {
-    return null;
-  }
+  const request = fetch(path, { cache: 'no-store' })
+    .then(response => response.ok ? response.text() : null)
+    .catch(() => null);
+  matchups_cache.set(path, request);
+  const html = await request;
+  if (!html && matchups_cache.get(path) === request) matchups_cache.delete(path);
+  return html;
 }
 //#################################################################### Projected pitchers (StatsAPI probables -> sp_vs_team fragments) ####################################################################
 //#################################################################### Fantasy ownership ####################################################################
@@ -7178,13 +7108,8 @@ async function load_matchups_ownership_lookup(year) {
 
   const promise = (async () => {
     try {
-      const r = await fetch(`assets/fantasy_${encodeURIComponent(y)}.json`, {
-        cache: 'no-store'
-      });
-
-      if (!r.ok) return null;
-
-      const data = await r.json();
+      const data = await load_fantasy_year(y);
+      if (!data) return null;
 
       const lookup = {
         hitters: new Map(),
@@ -7354,12 +7279,7 @@ const team_id_to_code = {
 };
 //#################
 async function fetch_probable_pitchers_for_date(date_str) {
-  const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${encodeURIComponent(date_str)}&hydrate=probablePitcher`;
-  const r = await fetch(url, { cache: 'no-store' });
-  if (!r.ok) return [];
-
-  const j = await r.json();
-  const games = (j.dates && j.dates[0] && Array.isArray(j.dates[0].games)) ? j.dates[0].games : [];
+  const games = await fetch_mlb_schedule_games(date_str);
   const out = [];
 
   for (const g of games) {
@@ -9307,15 +9227,10 @@ function find_fragment_key_loose(obj, wanted_name) {
     form_root.innerHTML = '';
     clear_results();
 
-    const idx = await load_matchups_index();
-    if (build_req_id !== matchups_build_form_req_id) return;
-    if (!idx) return;
-
-    const lists = await load_matchups_lists();
-    if (build_req_id !== matchups_build_form_req_id) return;
-
-    await load_matchups_rosters();
-    if (build_req_id !== matchups_build_form_req_id) return;
+    const [idx, lists] = await Promise.all([
+      load_matchups_index(), load_matchups_lists(), load_matchups_rosters()
+    ]);
+    if (build_req_id !== matchups_build_form_req_id || !idx) return;
 
     dbg('build_form mode:', mode_select.value);
     dbg('idx years:', idx && idx.years ? idx.years : '(none)');
@@ -10531,7 +10446,18 @@ setTimeout(() => submit(), 0);
 //#################################################################### Mode: gameday_matchup ####################################################################
 if (mode === 'gameday_matchup') {
   const day_obj = make_select('matchups_gd_day', 'Day');
+  const isDevExample = initial_matchups_params.get('fixture') === 'dev';
+  async function getGamedayGames(date, devExample) {
+    if (!devExample) return fetch_matchups_for_date(date);
+    const data = await load_today_preview();
+    return data.games.map((game, index) => ({
+      game_id: 'dev-' + index,
+      away_team: game.away, home_team: game.home,
+      away_pitcher: game.pitchers[0], home_pitcher: game.pitchers[1]
+    }));
+  }
   set_select_options(day_obj.sel, ['3 days ago', '2 days ago', 'Yesterday', 'Today', 'Tomorrow', '+2 days', '+3 days', '+4 days'], 'Select');
+  if (isDevExample) day_obj.sel.add(new Option('DEV example'));
   form_root.appendChild(day_obj.wrap);
 
   const team_obj = make_select('matchups_gd_team', 'Team');
@@ -10558,7 +10484,7 @@ async function refresh_team_choices() {
   const d = add_days_local(new Date(), offset);
   const date_str = to_yyyy_mm_dd_local(d);
 
-  const games = await fetch_matchups_for_date(date_str);
+  const games = await getGamedayGames(date_str, day_obj.sel.value === 'DEV example');
 
   const playing = new Set();
 
@@ -10599,7 +10525,7 @@ async function refresh_game_choices() {
   const d = add_days_local(new Date(), offset);
   const date_str = to_yyyy_mm_dd_local(d);
 
-  const games = await fetch_matchups_for_date(date_str);
+  const games = await getGamedayGames(date_str, day_obj.sel.value === 'DEV example');
   const team_games = games.filter(g => g.home_team === selected_team || g.away_team === selected_team);
 
   if (team_games.length <= 1) {
@@ -10673,7 +10599,7 @@ submit();
 
       const selected_team = String(team_obj.sel.value || '').trim();
       if (!selected_team) return;
-      const games = await fetch_matchups_for_date(date_str);
+      const games = await getGamedayGames(date_str, day_obj.sel.value === 'DEV example');
       if (req_id !== gd_req_id) return;
 
       const team_games = games.filter(g => g.home_team === selected_team || g.away_team === selected_team);
@@ -10682,6 +10608,7 @@ submit();
 
       write_matchups_url_state({
         day: day_obj.sel.value,
+        fixture: day_obj.sel.value === 'DEV example' ? 'dev' : '',
         team: selected_team,
         game: String(selected_game_idx)
       });
@@ -12766,7 +12693,6 @@ const fantasy_state = {
   qual_min: '',
   sort_key: 'Val',
   sort_desc: true,
-  data_cache: new Map(),
   scales: null,
   show_gradients: false,
 };
@@ -13173,19 +13099,8 @@ async function load_fantasy_scales() {
 }
 /* ################# */
 async function load_fantasy_data(year) {
-  const y = String(year);
-
-  if (fantasy_state.data_cache.has(y)) {
-    return fantasy_state.data_cache.get(y);
-  }
-
-  const resp = await fetch(`assets/fantasy_${y}.json`);
-  if (!resp.ok) {
-    throw new Error(`Missing fantasy data for ${y}`);
-  }
-
-  const data = await resp.json();
-  fantasy_state.data_cache.set(y, data);
+  const data = await load_fantasy_year(year);
+  if (!data) throw new Error(`Missing fantasy data for ${year}`);
   return data;
 }
 /* ################# */

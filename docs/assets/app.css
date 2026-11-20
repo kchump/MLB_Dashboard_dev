@@ -3545,3 +3545,24 @@ TODAY'S SNAPSHOT + HOME TUTORIALS
   .player_page_inner > div:has(> .plotly-graph-div) { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
   .trade_page input, .trade_page select { font-size: 16px; }
 }
+
+/*====================================================================
+TODAY SCORE BADGES + PROSPECTS
+====================================================================*/
+.snapshot_score_value { display: inline-block; min-width: 3.2em; padding: 3px 6px; border-radius: 4px; text-align: right; font-weight: 700; }
+.snapshot_gameday { display: inline-block; padding: 7px 10px; }
+.snapshot_rankings { margin-top: 8px; }
+.snapshot_rankings table, .prospect_grid table { width: 100%; }
+.snapshot_rankings .snapshot_team { gap: 3px; }
+.snapshot_rankings .snapshot_team img { width: 16px; height: 16px; }
+.snapshot_rankings .snapshot_vs { color: var(--muted); }
+.prospect_table_wrap { max-width: 100%; overflow-x: auto; }
+.prospect_grid table { border-collapse: collapse; }
+.prospect_grid th, .prospect_grid td { padding: 6px; text-align: left; border-top: 1px solid var(--border); }
+.prospect_grid td img { width: 21px; height: 21px; object-fit: contain; }
+.prospect_grid select { margin: 0 0 8px 6px; padding: 5px; background: var(--control_bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+@media (max-width: 600px) {
+  .snapshot_rankings td, .snapshot_rankings th { padding: 4px; }
+  .snapshot_rankings .snapshot_team img { width: 14px; height: 14px; }
+  .prospect_grid select { font-size: 16px; min-height: 40px; }
+}

@@ -3,7 +3,8 @@
   const terms = new Set([
     'xOPS', 'BB%', 'Wk/PA', 'Bar/PA', 'Pwr/PA', 'ICR/PA', 'SwSp%', 'P/PA',
     'Whiff%', 'CSW%', 'Good Swings', 'Bad Swings', 'Fan Val', 'pVelo', 'QS/SV',
-    'WHIP', 'SwStr%', 'Strike%', 'Loc for Con', 'Loc for K/BB', 'pERA', 'Pitches +/-'
+    'WHIP', 'SwStr%', 'Strike%', 'Loc for Con', 'Loc for K/BB', 'pERA', 'Pitches +/-',
+    'rAll', 'Squared', 'Eye', 'Stf', 'Funkiness', 'Matchup Score'
   ]);
   const definitions = new Map();
   let glossaryRequest;
@@ -44,6 +45,9 @@
     tip.textContent = definitions.get(term);
     tip.hidden = false;
     link.setAttribute('aria-describedby', tip.id);
+    positionTip(link);
+  }
+  function positionTip(link) {
     const box = link.getBoundingClientRect();
     const maxLeft = Math.max(8, document.documentElement.clientWidth - tip.offsetWidth - 8);
     tip.style.left = Math.max(8, Math.min(box.left, maxLeft)) + 'px';
@@ -69,7 +73,8 @@
     if (content.querySelector('#key')) return;
     content.querySelectorAll('table thead th').forEach(cell => {
       const sort = cell.querySelector('button[data-sort_key]');
-      const term = sort?.dataset.sort_key || cell.textContent.trim();
+      const label = sort?.dataset.sort_key || cell.textContent.trim();
+      const term = label === 'Score' && cell.closest('.today_snapshot') ? 'Matchup Score' : label;
       if (!terms.has(term)) return;
       if (sort) {
         bindTip(sort, term);
@@ -79,7 +84,7 @@
       const link = document.createElement('a');
       link.href = '#key';
       link.className = 'stat_glossary_link';
-      link.textContent = term;
+      link.textContent = label;
       bindTip(link, term);
       link.addEventListener('click', event => {
         event.stopPropagation();
@@ -90,7 +95,11 @@
   }
   new MutationObserver(decorateHeaders).observe(content, { childList: true, subtree: true });
   addEventListener('resize', () => hideTip());
-  addEventListener('scroll', () => hideTip(), true);
+  addEventListener('scroll', () => {
+    if (tip.hidden) return;
+    if (active?.isConnected && document.activeElement === active) positionTip(active);
+    else hideTip();
+  }, true);
   addEventListener('keydown', event => { if (event.key === 'Escape') hideTip(); });
   decorateHeaders();
 })();
