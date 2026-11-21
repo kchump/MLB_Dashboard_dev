@@ -980,6 +980,18 @@ async function load_compare_payload() {
   }
 }
 /* ################# */
+let compare_catalog_request;
+
+function load_compare_catalog() {
+  if (!compare_catalog_request) {
+    compare_catalog_request = fetch('assets/compare_catalog.json')
+      .then(response=>response.ok ? response.json() : null)
+      .catch(()=>null)
+      .then(payload=>payload || load_compare_payload());
+  }
+  return compare_catalog_request;
+}
+/* ################# */
 function compare_role_group_for_link(a) {
   const role = String(a?.dataset?.role || '').trim().toLowerCase();
 
@@ -1189,7 +1201,7 @@ async function active_compare_page_is_eligible(active, role_group) {
   const page = String(active.dataset.page || '').trim();
   if (!page) return false;
 
-  const payload = await load_compare_payload();
+  const payload = await load_compare_catalog();
   const players_lookup = payload?.players || {};
   const player = compare_lookup_player_from_payload(players_lookup, page);
   if (!player) return false;
@@ -1199,6 +1211,19 @@ async function active_compare_page_is_eligible(active, role_group) {
 
   return compare_player_has_required_panels(player, compare_link_is_minors(active, null, player));
 }
+/* ################# */
+// Namesake labels belong to the card route. The exported names still key the source rows.
+const compare_namesake_labels = new Map(
+  [...document.querySelectorAll('.toc_link[data-namesake-mlbam]')]
+    .map(link=>[link.dataset.page,link.firstChild.textContent.trim()])
+);
+
+function compare_display_name(route, fallback) {
+  const [page, season] = String(route || '').split('~');
+  const name = compare_namesake_labels.get(page);
+  return name ? (season ? name+' '+season : name) : String(fallback || '').trim();
+}
+
 /* ################# */
 function get_compare_historical_entries_for_page(compare_players, active_page, role_group) {
   const page = String(active_page || '').trim();
@@ -1230,7 +1255,7 @@ function get_compare_historical_entries_for_page(compare_players, active_page, r
       page: compare_id,
       navigation_page: String(player?.page_id || '').trim(),
       team: String(player?.team || 'Other').trim(),
-      name: String(player?.name || '').trim(),
+      name: compare_display_name(compare_id, player?.name),
       pts: -Infinity,
       score: -Infinity,
       season: Number(player?.season),
@@ -1250,7 +1275,7 @@ async function get_compare_peer_links_for_active_page({ include_ineligible = fal
 
   const active_page = String(active.dataset.page || '').trim();
 
-  const compare_payload = await load_compare_payload();
+  const compare_payload = await load_compare_catalog();
   const compare_players = compare_payload?.players || {};
 
   const out = get_compare_historical_entries_for_page(
@@ -1289,11 +1314,7 @@ async function get_compare_peer_links_for_active_page({ include_ineligible = fal
       'Other'
     ).trim();
 
-    const name = String(
-      player?.name ||
-      get_clean_compare_link_text(a) ||
-      page
-    ).trim();
+    const name = compare_display_name(page, player?.name || get_clean_compare_link_text(a) || page);
 
     seen_pages.add(page);
 
@@ -2072,6 +2093,7 @@ const own_pct_year = String(
   new Date().getFullYear()
 ).trim();
 
+  const display_name = compare_display_name(compare_id, player?.name);
   const name_html = page_id
     ? `
       <a
@@ -2079,9 +2101,9 @@ const own_pct_year = String(
         class='compare_player_name_link'
         data-page='${escape_attr(page_id)}'
         data-compare-id='${escape_attr(compare_id)}'
-      >${escape_html(player?.name || '')}</a>
+      >${escape_html(display_name)}</a>
     `
-    : escape_html(player?.name || '');
+    : escape_html(display_name);
 
   return `
     <div class='compare_player_card'>
@@ -2207,7 +2229,7 @@ function trade_candidates_from_payload(players_lookup) {
     .map(([page, player]) => ({
       page,
       player,
-      name: String(player?.name || page).trim(),
+      name: compare_display_name(page, player?.name || page),
       role_group: trade_player_type_from_payload_player(player),
       team: trade_team_for_candidate(page, player),
     }))
@@ -2383,9 +2405,8 @@ function trade_top_controls_html(state) {
   `;
 }
 /* ################# */
-async function sync_compare_trade_streak_emojis(root) {
+function sync_compare_trade_streak_emojis(root, payload) {
   const scope = root || document;
-  const payload = await load_compare_payload();
   const players_lookup = payload?.players || {};
 
   scope.querySelectorAll(
@@ -2471,15 +2492,63 @@ async function sync_fantasy_streak_emojis(root) {
   });
 }
 /* ################# */
+function bind_trade_season_history(root, sides) {
+  const panel = root.querySelector('.trade_season_history');
+  if (!panel) return;
+  const select = panel.querySelector('select');
+  const output = panel.querySelector('[data-trade-season-results]');
+  let revision = 0;
+  async function render() {
+    if (!panel.open) return;
+    const current = ++revision;
+    const base = 'pilot/data/';
+    output.textContent = 'Loading season history…';
+    const [index, seasons] = await Promise.all([
+      load_compare_shard(base+'career-index.json', false),
+      load_compare_shard(base+'career-seasons.json', false),
+    ]);
+    const routes = new Map((index || []).filter(row => row[4]).map(row => [row[4],row]));
+    const players = await Promise.all(sides.flatMap((pages, side) => pages.map(async route => {
+      const entry = routes.get(route.split('~')[0]);
+      if (!entry) return null;
+      const [identity,,label,shard] = entry;
+      const data = await load_compare_shard(base+'career-shards/'+shard+'.json', false);
+      return {side: 'Team '+String.fromCharCode(65+side), label, rows: data?.[identity] || []};
+    })));
+    if (current !== revision || !panel.isConnected) return;
+    const count = Number(select.value);
+    const earliest = count && seasons ? seasons.latest-count+1 : 0;
+    const rows = players.filter(Boolean).flatMap(({side,label,rows}) => rows.slice().reverse()
+      .filter(row => row.year >= earliest)
+      .map(row => [side,label,row.year,row.Score,row.All,row.PPG,row.Val]));
+    if (!rows.length) {
+      output.textContent = 'Season history is unavailable for this selection.';
+      return;
+    }
+    output.innerHTML = `<table class="compare_stat_table"><thead><tr>${['Side','Player','Year','Score','Pitch Score','PPG','Val']
+      .map(label => `<th scope="col">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(row =>
+      `<tr>${row.map(value => `<td>${escape_html(value ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  }
+  panel.addEventListener('toggle', render);
+  select.addEventListener('change', render);
+}
+/* ################# */
 async function render_trade_page_from_hash() {
   const content = document.getElementById('content_root');
   if (!content) return;
 
-  const payload = await load_compare_payload();
+  const requested_hash = window.location.hash;
+  const state = parse_trade_hash_state();
+  const selected = state.sides.flat();
+  const [catalog, payload] = await Promise.all([
+    load_compare_catalog(),
+    selected.length ? load_compare_selection(selected) : null,
+  ]);
+  if (requested_hash !== window.location.hash) return;
+
   const players_lookup = payload?.players || {};
   const scales = payload?.scales || {};
-  const candidates = trade_candidates_from_payload(players_lookup);
-  const state = parse_trade_hash_state();
+  const candidates = trade_candidates_from_payload(catalog?.players || players_lookup);
 
   content.innerHTML = `
     <div class='trade_page'>
@@ -2507,8 +2576,16 @@ async function render_trade_page_from_hash() {
           );
         }).join('')}
       </div>
+      ${selected.length ? `<details class="trade_season_history">
+        <summary>Season history</summary>
+        <label>Seasons <select><option value="0">Career</option><option value="1">This year</option>
+          <option value="2">Last 2 years</option><option value="3">Last 3 years</option></select></label>
+        <div data-trade-season-results style="overflow-x:auto" tabindex="0" role="region" aria-label="Trade season history"></div>
+      </details>` : ''}
     </div>
   `;
+
+  bind_trade_season_history(content, state.sides);
 
   content.querySelectorAll('.compare_player_name_link[data-page]').forEach(a => {
     if (a.dataset.bound === '1') return;
@@ -2648,7 +2725,7 @@ type_sel.addEventListener('change', () => {
   });
   bind_compare_panel_filter_controls(content);
   refresh_compare_table_cell_theme(content);
-  await sync_compare_trade_streak_emojis(content);
+  sync_compare_trade_streak_emojis(content, payload);
   await sync_compare_trade_own_pct(content);
 
   active_page_id = 'trade';
@@ -2657,6 +2734,37 @@ type_sel.addEventListener('change', () => {
   document.querySelectorAll('.toc_link').forEach(a => a.classList.remove('active'));
 }
 /* ################# */
+const compare_shard_requests = new Map();
+
+function load_compare_shard(path, compressed) {
+  if (!compare_shard_requests.has(path)) {
+    const request = fetch(path).then(response => {
+      if (!response.ok) return null;
+      return compressed
+        ? new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json()
+        : response.json();
+    }).catch(() => null);
+    compare_shard_requests.set(path,request);
+  }
+  return compare_shard_requests.get(path);
+}
+
+async function load_compare_selection(page_ids) {
+  const routes = [...new Set(page_ids.map(id=>id.split('~')[0]))];
+  if (typeof DecompressionStream !== 'function' || routes.some(route=>!/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(route))) {
+    return load_compare_payload();
+  }
+
+  const root = 'assets/compare-shards/';
+  const [scales, ...bundles] = await Promise.all([
+    load_compare_shard(root+'scales.json',false),
+    ...routes.map(route=>load_compare_shard(root+encodeURIComponent(route)+'.bin',true)),
+  ]);
+  const players = Object.assign({},...bundles);
+  if (!scales || page_ids.some(id=>!Object.hasOwn(players,id))) return load_compare_payload();
+  return {players,scales};
+}
+
 async function render_compare_page_from_hash() {
   const content = document.getElementById('content_root');
   if (!content) return;
@@ -2664,7 +2772,7 @@ async function render_compare_page_from_hash() {
   const page_ids = parse_compare_hash_players();
   if (!page_ids.length) return;
 
-  const payload = await load_compare_payload();
+  const payload = await load_compare_selection(page_ids);
   const players_lookup = payload?.players || {};
   const scales = payload?.scales || {};
 
@@ -2729,7 +2837,7 @@ async function render_compare_page_from_hash() {
   
   bind_compare_panel_filter_controls(content);
   refresh_compare_table_cell_theme(content);
-  await sync_compare_trade_streak_emojis(content);
+  sync_compare_trade_streak_emojis(content, payload);
   await sync_compare_trade_own_pct(content);
   const back_btn = content.querySelector('.compare_back_btn');
   back_btn?.addEventListener('click', () => {
@@ -2743,6 +2851,92 @@ async function render_compare_page_from_hash() {
   document.querySelectorAll('.toc_link').forEach(a => a.classList.remove('active'));
 }
 /* ################# */
+function open_dev_player_view(view, content) {
+  const label = content.querySelector('.player_name');
+  const person = label && Array.from(label.childNodes)
+    .filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent).join(' ').trim();
+  const url = new URL('pilot/', window.location.href);
+  if (person) url.searchParams.set('player',person);
+  if (view==='career' || view==='logs') {
+    const season = content.querySelector('.year_buttons[data-person_key]');
+    const role = {batters:'hitters',starters:'sp',bullpen:'rp'}[season?.dataset.role];
+    if (role) url.searchParams.set('careerKey',role+'|'+season.dataset.person_key);
+  }
+  url.hash = view;
+  window.top.location.assign(url.href);
+}
+
+let dev_player_banner_enabled = false;
+let dev_player_banner_photos;
+
+function set_dev_player_banner(enabled, remember = false) {
+  dev_player_banner_enabled = Boolean(enabled);
+  document.getElementById('dev_banner_toggle')?.setAttribute('aria-pressed',String(dev_player_banner_enabled));
+  if (remember) {
+    try {localStorage.setItem('dev-player-banner',enabled ? '1' : '0');} catch (error) {}
+  }
+  render_dev_player_banner();
+}
+
+async function render_dev_player_banner() {
+  const header = document.querySelector('#content_root .player_header');
+  if (!header?.querySelector('.year_buttons')) return;
+  header.classList.toggle('pilot-player-banner',dev_player_banner_enabled);
+  if (!dev_player_banner_enabled) {
+    header.querySelector('.pilot-banner-portrait')?.remove();
+    header.style.removeProperty('--pilot-banner-logo');
+    return;
+  }
+
+  const route = active_page_id;
+  const team = active_content_file.startsWith('pages/')
+    ? document.querySelector('.toc_link[data-page="'+CSS.escape(route)+'"]')?.dataset.team
+    : '';
+  if (/^[A-Z]{2,3}$/.test(team)) {
+    const logo = new URL('team_logos/'+team+'.png',document.baseURI);
+    header.style.setProperty('--pilot-banner-logo','url("'+logo.href+'")');
+  }
+  dev_player_banner_photos ??= fetch('pilot/data/photos.json')
+    .then(response=>response.ok ? response.json() : {}).catch(()=>({}));
+  const filename = (await dev_player_banner_photos)[route];
+  if (!filename || !header.isConnected || !dev_player_banner_enabled) return;
+  const name = header.querySelector('.player_name');
+  if (!name || name.querySelector('img')) return;
+  const portrait = document.createElement('img');
+  portrait.alt = '';
+  portrait.className = 'pilot-banner-portrait';
+  portrait.src = filename.startsWith('https://') ? filename : 'pilot/data/thumbs/'+encodeURIComponent(filename);
+  name.prepend(portrait);
+}
+
+let dev_miss_distance_request;
+
+async function render_dev_miss_distance(content, page, file) {
+  const player = content.querySelector('.year_buttons[data-role="batters"]');
+  const actions = content.querySelector('.player_header_actions');
+  if (!player || !actions) return;
+  const season = Object.keys(year_page_lookup || {}).find(year=>
+    year_page_lookup[year]?.batters?.[player.dataset.person_key]===file);
+  if (!season) return;
+
+  dev_miss_distance_request ??= fetch('pilot/data/miss-distance.json')
+    .then(response=>response.ok ? response.json() : []).catch(()=>[]);
+  const rows = await dev_miss_distance_request;
+  const sample = rows.find(row=>row.routes?.includes(page) && row.seasons.length===1 && row.seasons[0]===Number(season));
+  if (!sample || !actions.isConnected || content.querySelector('[data-dev-miss-distance]')) return;
+  const callout = document.createElement('p');
+  callout.dataset.devMissDistance = '1';
+  const url = new URL('pilot/',document.baseURI);
+  url.searchParams.set('hitter',sample.id);
+  url.hash = 'bat-tracking';
+  const link = document.createElement('a');
+  link.href = url.href;
+  link.target = '_top';
+  link.textContent = 'Miss distance';
+  callout.append(link,' · '+sample.median.toFixed(2)+' in median · '+sample.tracked+' tracked whiffs in sample');
+  actions.after(callout);
+}
+
 function sync_player_page_action_buttons() {
   const content = document.getElementById('content_root');
   if (!content) return;
@@ -2786,6 +2980,19 @@ function sync_player_page_action_buttons() {
     watchlist_btn.type = 'button';
     watchlist_btn.className = 'watchlist_page_btn';
     actions_row.appendChild(watchlist_btn);
+  }
+
+  // Keep Compare's input, selection chips and feedback in its own wrapper.
+  if (!actions_row.querySelector('[data-game-logs]')) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'watchlist_page_btn';
+    button.dataset.gameLogs = '1';
+    button.textContent = 'Game Logs';
+    button.addEventListener('click', () => {
+      open_dev_player_view('logs', content);
+    });
+    watchlist_btn.after(button);
   }
 
   let compare_wrap = actions_row.querySelector('.compare_page_wrap');
@@ -3152,7 +3359,7 @@ async function fantasy_own_pct_for_person(
 
   if (!y || !key) return '';
 
-  const data = await load_fantasy_year(y);
+  const data = await load_sidebar_season(y);
   if (!data) return '';
 
   const row = find_player_row_anywhere(
@@ -3482,6 +3689,19 @@ function find_player_row_anywhere(data, person_key, role) {
 
   return null;
 }
+const sidebar_season_requests = new Map();
+
+function load_sidebar_season(year) {
+  if (!sidebar_season_requests.has(year)) {
+    const request = fetch(`assets/sidebar/${encodeURIComponent(year)}.json`)
+      .then(response=>response.ok ? response.json() : null)
+      .catch(()=>null)
+      .then(payload=>payload || load_fantasy_year(year));
+    sidebar_season_requests.set(year, request);
+  }
+  return sidebar_season_requests.get(year);
+}
+
 const sidebar_fval_lookup_cache = new Map();
 /* ################# */
 async function sidebar_fval_lookup_for_year(year) {
@@ -3492,7 +3712,7 @@ async function sidebar_fval_lookup_for_year(year) {
     return sidebar_fval_lookup_cache.get(y);
   }
 
-  const data = await load_fantasy_year(y);
+  const data = await load_sidebar_season(y);
   const out = new Map();
 
   if (data) {
@@ -3654,7 +3874,7 @@ async function sync_sidebar_streak_emojis(root = document) {
 }
 /* ################# */
 async function val_for_year_person(year, person_key, role) { //absolute value comparison of Val and S Val
-  const data = await load_fantasy_year(year);
+  const data = await load_sidebar_season(year);
 
   const row = find_player_row_anywhere(data, person_key, role);
 
@@ -3925,6 +4145,7 @@ async function render_year_select_in_content(content_root) {
     const selected_option = sel.options[
       sel.selectedIndex
     ];
+    if (selected_option) sel.add(new Option('Career','dev-career'));
 
     const selected_year = String(
       selected_option?.dataset?.year ||
@@ -3970,6 +4191,10 @@ async function render_year_select_in_content(content_root) {
 
       const file = sel.value;
       if (!file) return;
+      if (file === 'dev-career') {
+        open_dev_player_view('career', content_root);
+        return;
+      }
 
       load_page(file, active_page_id || (document.querySelector('.toc_link.active')?.dataset.page || ''));
       if (active_page_id) history.replaceState(null, '', '#' + encodeURIComponent(active_page_id));
@@ -4123,6 +4348,75 @@ function ensure_plotly_loaded() {
   return plotly_request;
 }
 
+async function fetch_dev_page_html(file) {
+  const url = new URL(file,document.baseURI);
+  const archived = document.querySelector('meta[name="dev-compressed-history"]') &&
+    /\/pages_y20(?:1[5-9]|2[0-5])\/[^/]+\.html$/.test(url.pathname);
+  if (!archived) {
+    const response = await fetch(file);
+    if (!response.ok) throw new Error('Page unavailable');
+    return response.text();
+  }
+  if (typeof DecompressionStream !== 'function') throw new Error('Archived card requires gzip support');
+  url.pathname += '.bin';
+  const response = await fetch(url);
+  if (!response.ok || !response.body) throw new Error('Archived card unavailable');
+  return new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).text();
+}
+
+/* ################# */
+const team_resource_links = {
+  ARI: ['dbacks','azdiamondbacks'], ATL: ['braves','Braves'], BAL: ['orioles','orioles'],
+  BOS: ['redsox','redsox'], CHC: ['cubs','CHICubs'], CHW: ['whitesox','whitesox'],
+  CIN: ['reds','Reds'], CLE: ['guardians','ClevelandGuardians'], COL: ['rockies','ColoradoRockies'],
+  DET: ['tigers','motorcitykitties'], HOU: ['astros','Astros'], KC: ['royals','KCRoyals','KCR'],
+  LAA: ['angels','angelsbaseball'], LAD: ['dodgers','Dodgers'], MIA: ['marlins','MiamiMarlins'],
+  MIL: ['brewers','Brewers'], MIN: ['twins','minnesotatwins'], NYM: ['mets','NewYorkMets'],
+  NYY: ['yankees','NYYankees'], ATH: ['athletics','OaklandAthletics'], PHI: ['phillies','phillies'],
+  PIT: ['pirates','buccos'], SD: ['padres','Padres','SDP'], SEA: ['mariners','Mariners'],
+  SF: ['giants','SFGiants','SFG'], STL: ['cardinals','Cardinals'], TB: ['rays','tampabayrays','TBR'],
+  TEX: ['rangers','TexasRangers'], TOR: ['bluejays','Torontobluejays'], WAS: ['nationals','Nationals','WSN'],
+};
+
+function add_team_resource_navigation() {
+  for (const team of Object.keys(team_resource_links)) {
+    const body = document.querySelector(`.team_body[data-team="${team}"]`);
+    if (!body) continue;
+    const link = document.createElement('a');
+    link.className = 'toc_link meta_link';
+    link.href = '#team-'+team;
+    link.dataset.page = 'team-'+team;
+    link.dataset.file = 'pages/team-resources.html';
+    link.dataset.role = 'meta';
+    link.textContent = 'Team resources';
+    body.append(link);
+  }
+}
+
+function render_team_resources(content, team) {
+  const [slug, subreddit, reference = team] = team_resource_links[team];
+  const name = document.querySelector(`.team_title[data-team="${team}"] .team_name`)?.textContent.trim() || team;
+  content.querySelector('[data-team-resource-name]').textContent = name;
+  const logo = content.querySelector('[data-team-resource-logo]');
+  logo.src = team_logo_src_for_code(team);
+  const mlb = `https://www.mlb.com/${slug}/roster/`;
+  const resources = [
+    ['MLB transactions', mlb+'transactions'], ['MLB depth chart', mlb+'depth-chart'],
+    ['Depth chart with dashboard grades', 'pilot/?team='+team+'#depth'],
+    ['MLB 40-man roster', mlb+'40-man'], ['Baseball-Reference · 2025', `https://www.baseball-reference.com/teams/${reference}/2025.shtml`],
+    ['Team subreddit', `https://www.reddit.com/r/${subreddit}/`],
+  ];
+  const list = content.querySelector('[data-team-resource-list]');
+  for (const [label, url] of resources) {
+    const item = document.createElement('li');
+    const link = document.createElement('a');
+    link.textContent = label;
+    link.href = url;
+    item.append(link);
+    list.append(item);
+  }
+}
+
 async function load_page(file, page_id) {
   const content = document.getElementById('content_root');
   if (!content) return;
@@ -4135,9 +4429,7 @@ async function load_page(file, page_id) {
   let html = page_cache.get(file);
   if (!html) {
     try {
-      const r = await fetch(file);
-      if (!r.ok) throw new Error('Page unavailable');
-      html = await r.text();
+      html = await fetch_dev_page_html(file);
       page_cache.set(file, html);
     } catch (error) {
       if (request === page_load_sequence) content.textContent = 'This page could not load.';
@@ -4168,6 +4460,7 @@ async function load_page(file, page_id) {
   }
   if (request !== page_load_sequence) return;
   content.innerHTML = html;
+  if (file === 'pages/team-resources.html') render_team_resources(content, pid.slice(5));
   active_content_file = file || '';
   active_page_id = pid || active_page_id || '';
 
@@ -4244,6 +4537,8 @@ async function load_page(file, page_id) {
   await sync_sidebar_streak_emojis(document);
   update_sidebar_custom_icons(document);
   sync_player_page_action_buttons();
+  render_dev_miss_distance(content,pid,file);
+  render_dev_player_banner();
 
   const search = document.getElementById('player_search');
   apply_search_and_filters((search && search.value) ? search.value : '');
@@ -4257,7 +4552,7 @@ async function load_page(file, page_id) {
       if (!a) return;
       const f = a.dataset.file;
       if (!f || page_cache.has(f)) return;
-      fetch(f).then(r => r.text()).then(t => page_cache.set(f, t)).catch(() => {});
+      fetch_dev_page_html(f).then(t => page_cache.set(f, t)).catch(() => {});
     });
   }
 }
@@ -4317,7 +4612,26 @@ function default_page_id() {
   return 'home';
 }
 /* ################# */
-function on_hash_change() { /* back button works now? */
+// Keep saved player links stable. The club and role disambiguate namesakes.
+const legacy_player_routes = new Map([
+  ['ATH-batters-max-muncy','ATH-batters-max-muncy-ath'],
+  ['MIA-batters-christopher-morel','NYM-batters-christopher-morel'],
+  ['MIN-bullpen-luis-garcia','MIN-bullpen-luis-garcia-rp'],
+  ['NYY-starters-luis-garcia-sp','NYY-starters-luis-garcia'],
+  ['WAS-batters-luis-garcia','WAS-batters-luis-garcia-jr'],
+]);
+
+function resolve_dashboard_route(pid, links) {
+  const exact = links.find(link=>link.dataset.page===pid);
+  if (exact) return exact;
+  const old = /^(.*)-([^-]*\s[^-]+)$/.exec(pid);
+  const candidate = old ? old[1] : pid;
+  const aliased = legacy_player_routes.get(candidate) || candidate;
+  if (!old && aliased===pid) return null;
+  return links.find(link=>link.dataset.page===aliased);
+}
+
+function on_hash_change() {
   const raw_hash = String(window.location.hash || '');
   const pid = default_page_id();
 
@@ -4331,17 +4645,29 @@ function on_hash_change() { /* back button works now? */
     return;
   }
 
-  let a = null;
-  document.querySelectorAll('.toc_link').forEach(x => {
-    if (x.dataset.page === pid) a = x;
-  });
-
-  if (!a) return;
-
-  const file = a.dataset.file;
-  if (!file) return;
-
-  load_page(file, pid);
+  const links = [...document.querySelectorAll('.toc_link')];
+  const link = resolve_dashboard_route(pid,links);
+  if (!link?.dataset.file) {
+    if (!raw_hash) {
+      const home = links.find(item=>item.dataset.page==='home');
+      if (home?.dataset.file) load_page(home.dataset.file,'home');
+      return;
+    }
+    ++page_load_sequence;
+    const content = document.getElementById('content_root');
+    if (content) {
+      const message = document.createElement('p');
+      message.setAttribute('role','status');
+      message.textContent = 'This bookmark does not match a player or page. Try the player search or ';
+      const home = document.createElement('a');
+      home.href = '#home';
+      home.textContent = 'return Home';
+      message.append(home,'.');
+      content.replaceChildren(message);
+    }
+    return;
+  }
+  load_page(link.dataset.file,link.dataset.page);
 }
 /*#################################################################### Sidebar team role tabs ####################################################################*/
 function set_team_role_tab(team, role) {
@@ -5900,8 +6226,14 @@ function init_fantasy_page_if_present(content) {
 }
 /*#################################################################### DOMContentLoaded wiring (events + initial state) ####################################################################*/
 document.addEventListener('DOMContentLoaded', () => {
+  add_team_resource_navigation();
   const toggle_sidebar_btn = document.getElementById('toggle_sidebar');
   const theme_toggle_btn = document.getElementById('theme_toggle');
+  const bannerToggle = document.getElementById('dev_banner_toggle');
+  if (bannerToggle) {
+    try {set_dev_player_banner(localStorage.getItem('dev-player-banner')==='1');} catch (error) {}
+    bannerToggle.addEventListener('click',()=>set_dev_player_banner(!dev_player_banner_enabled,true));
+  }
   requestAnimationFrame(() => repaint_standard_stats_tables(document));
 
   if (theme_toggle_btn) {
@@ -6089,73 +6421,51 @@ function join_matchups_fragment_path(idx, year, rel_path) {
   return `${root}/${rel_path}`.replace(/\/+/g, '/');
 }
 //#################
-async function load_matchups_index() {
-  if (matchups_index !== null) return matchups_index;
-
-  try {
-    const r = await fetch('assets/matchups/matchups_index.json', { cache: 'no-store' });
-    if (!r.ok) {
-      matchups_index = null;
-      return null;
-    }
-
-    matchups_index = await r.json();
-    dbg('loaded matchups_index.json keys:', Object.keys(matchups_index || {}));
-    return matchups_index;
-
-  } catch (e) {
-    matchups_index = null;
-    return null;
-  }
-}
-//#################
-async function load_matchups_lists() {
-  if (matchups_lists !== null) return matchups_lists;
-
-  try {
-    const r = await fetch('assets/matchups/matchups_lists.json', { cache: 'no-store' });
-    if (!r.ok) {
-      matchups_lists = null;
-      return null;
-    }
-
-    matchups_lists = await r.json();
-    dbg('loaded matchups_lists.json keys:', Object.keys(matchups_lists || {}));
-
-    if (matchups_lists && matchups_lists.by_year && typeof matchups_lists.by_year === 'object') {
-      dbg('matchups_lists by_year years:', Object.keys(matchups_lists.by_year).slice(0, 10));
-    } else {
-      dbg('matchups_lists has no by_year (or wrong shape)');
-    }
-
-    return matchups_lists;
-
-  } catch (e) {
-    matchups_lists = null;
-    return null;
-  }
-}
-//#################
+const matchups_asset_requests = new Map();
 let matchups_rosters = null;
 
-async function load_matchups_rosters() {
-  if (matchups_rosters !== null) return matchups_rosters;
-
-  try {
-    const r = await fetch('assets/matchups/rosters.json', { cache: 'no-store' });
-    if (!r.ok) {
-      matchups_rosters = null;
-      return null;
-    }
-
-    matchups_rosters = await r.json();
-    dbg('loaded rosters.json keys:', Object.keys(matchups_rosters || {}));
-    return matchups_rosters;
-
-  } catch (e) {
-    matchups_rosters = null;
-    return null;
+function load_matchups_asset(filename) {
+  if (!matchups_asset_requests.has(filename)) {
+    const request = fetch('assets/matchups/'+filename, { cache: 'no-store' })
+      .then(response=>response.ok ? response.json() : null)
+      .catch(()=>null)
+      .then(payload=>{
+        if (!payload) matchups_asset_requests.delete(filename);
+        return payload;
+      });
+    matchups_asset_requests.set(filename,request);
   }
+  return matchups_asset_requests.get(filename);
+}
+
+async function load_matchups_index() {
+  matchups_index = await load_matchups_asset('matchups_index.json');
+  if (matchups_index?.fragment_encoding === 'path-prefix-v1') {
+    for (const [mode, config] of Object.entries(matchups_index.modes)) {
+      const directory = mode === 'sp_vs_2' ? 'sp_vs_team' : mode;
+      for (const players of Object.values(config.fragments)) {
+        for (const [player, sides] of Object.entries(players)) {
+          for (const [side, opponents] of Object.entries(sides)) {
+            for (const [opponent, path] of Object.entries(opponents)) {
+              if (!path.includes('/')) opponents[opponent] = `${directory}/${player}/${side}/${path}`;
+            }
+          }
+        }
+      }
+    }
+    delete matchups_index.fragment_encoding;
+  }
+  return matchups_index;
+}
+
+async function load_matchups_lists() {
+  matchups_lists = await load_matchups_asset('matchups_lists.json');
+  return matchups_lists;
+}
+
+async function load_matchups_rosters() {
+  matchups_rosters = await load_matchups_asset('rosters.json');
+  return matchups_rosters;
 }
 //#################################################################### Select utils ####################################################################
 //#################################################################### MLB schedule ####################################################################
@@ -7002,13 +7312,37 @@ function resolve_fragment(idx, year, mode, keys) {
   return resolve_matchups_path(idx, year, cur);
 }
 //#################
+const matchup_bundle_requests = new Map();
+
+async function read_matchup_bundle(path) {
+  const match = /^assets\/matchups\/fragments\/2026\/(sp_vs_team|hitter_vs_pitcher)\/([^/]+)\/(.+)$/.exec(path);
+  if (!match || typeof DecompressionStream !== 'function') return null;
+  const [, mode, player, fragment] = match;
+  const directory = mode === 'sp_vs_team' ? 'starter-bundles' : 'hitter-bundles';
+  const url = 'assets/matchups/'+directory+'/2026/'+encodeURIComponent(player)+'.bin';
+  if (!matchup_bundle_requests.has(url)) {
+    if (matchup_bundle_requests.size >= 16) {
+      matchup_bundle_requests.delete(matchup_bundle_requests.keys().next().value);
+    }
+    const request = fetch(url)
+      .then(response=>{
+        if (!response.ok || !response.body) return null;
+        return new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
+      })
+      .catch(()=>null);
+    matchup_bundle_requests.set(url,request);
+  }
+  const bundle = await matchup_bundle_requests.get(url);
+  return typeof bundle?.[fragment] === 'string' ? bundle[fragment] : null;
+}
+
 async function load_matchup_fragment(path) {
   if (!path) return null;
   if (matchups_cache.has(path)) return matchups_cache.get(path);
 
-  const request = fetch(path, { cache: 'no-store' })
-    .then(response => response.ok ? response.text() : null)
-    .catch(() => null);
+  const request = read_matchup_bundle(path).then(html=>html ??
+    fetch(path, { cache: 'no-store' }).then(response => response.ok ? response.text() : null)
+  ).catch(() => null);
   matchups_cache.set(path, request);
   const html = await request;
   if (!html && matchups_cache.get(path) === request) matchups_cache.delete(path);
@@ -7297,6 +7631,11 @@ async function fetch_probable_pitchers_for_date(date_str) {
     if (away_p) {
       out.push({
         pitcher: remove_accents(away_p),
+        game_pk: g.gamePk,
+        player_id: g.teams.away.probablePitcher.id,
+        first_pitch_at: g.gameDate,
+        pregame: g.status?.abstractGameState === 'Preview',
+        game_type: g.gameType,
         team: away_team,
         opp: home_team,
         side: 'Away',
@@ -7307,6 +7646,11 @@ async function fetch_probable_pitchers_for_date(date_str) {
     if (home_p) {
       out.push({
         pitcher: remove_accents(home_p),
+        game_pk: g.gamePk,
+        player_id: g.teams.home.probablePitcher.id,
+        first_pitch_at: g.gameDate,
+        pregame: g.status?.abstractGameState === 'Preview',
+        game_type: g.gameType,
         team: home_team,
         opp: away_team,
         side: 'Home',
@@ -9473,6 +9817,7 @@ function find_fragment_key_loose(obj, wanted_name) {
         Object.keys(filtered_hitters_by_team)
           .concat(Object.keys(filtered_starters_by_team))
           .concat(Object.keys(filtered_relievers_by_team))
+          .filter(team => team !== "<NA>")
       )).sort();
 
       year_lists = {
@@ -10318,10 +10663,134 @@ function sort_table_rows_by_all(table) {
     }
 //#################################################################### Mode: projected_pitchers ####################################################################
 if (mode === 'projected_pitchers') {
+  const localDev = ['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+  const rates = document.createElement('section');
+  rates.setAttribute('aria-label','Starter projection hit rates');
+  const title = document.createElement('strong');
+  title.textContent = 'Starter hit rates · 15+ points';
+  const summary = document.createElement('div');
+  summary.textContent = 'No settled pregame projections yet.';
+  rates.append(title,summary);
+  form_root.append(rates);
+  function renderHitRates(report) {
+    if (report?.points_at_least!==15 || !Array.isArray(report.thresholds) ||
+        report.thresholds.length!==3) return false;
+    const rows = [20,30,40].map(score=>report.thresholds.find(row=>row?.score_over===score));
+    if (rows.some(row=>!Number.isInteger(row?.hits) || !Number.isInteger(row?.starts) ||
+        row.hits<0 || row.hits>row.starts)) return false;
+
+    summary.replaceChildren(...rows.map(row=>{
+      const stat = document.createElement('div');
+      const rate = row.starts ? ' ('+Number((100*row.hits/row.starts).toFixed(1))+'%)' : '';
+      stat.textContent = 'Score > '+row.score_over+' · '+row.hits+'/'+row.starts+rate;
+      return stat;
+    }));
+    return true;
+  }
+
+  let importedRates = false;
+  let hasSavedRates = false;
+  fetch('assets/preview/starter-hit-rates.json').then(response=>response.ok ? response.json() : null)
+    .then(report=>{if (!importedRates && !hasSavedRates) renderHitRates(report);}).catch(()=>{});
+  if (localDev) {
+    const label = document.createElement('label');
+    label.textContent = 'Load local hit-rate summary ';
+    const file = document.createElement('input');
+    file.type = 'file';
+    file.accept = '.json,application/json';
+    const status = document.createElement('span');
+    status.setAttribute('role','status');
+    label.append(file);
+    rates.append(label,status);
+    file.addEventListener('change',async ()=>{
+      if (!file.files[0]) return;
+      try {
+        if (!renderHitRates(JSON.parse(await file.files[0].text()))) throw new Error('Invalid summary');
+        importedRates = true;
+        status.textContent = ' Local summary loaded.';
+      } catch (error) {
+        status.textContent = ' Could not load this summary.';
+      }
+    });
+  }
+
   const day_obj = make_select('matchups_proj_day', 'Day');
   set_select_options(day_obj.sel, ['3 days ago', '2 days ago', 'Yesterday', 'Today', 'Tomorrow', '+2 days', '+3 days', '+4 days'], 'Select');
 
   form_root.appendChild(day_obj.wrap);
+  const capture = document.createElement('button');
+  capture.type = 'button';
+  capture.className = 'matchups_submit';
+  capture.textContent = 'Save Pregame Projections';
+  capture.disabled = true;
+  const captureStatus = document.createElement('span');
+  captureStatus.setAttribute('role','status');
+  form_root.append(capture,captureStatus);
+  let captureRows = [];
+
+  function exportProjections(rows, label) {
+    const csv = ['game_pk,player_id,captured_at,first_pitch_at,matchup_score',
+      ...rows.map(row=>[row.game_pk,row.player_id,row.captured_at,row.first_pitch_at,row.score].join(','))].join('\n')+'\n';
+    const url = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = label+'-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv';
+    link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+
+  capture.addEventListener('click',()=>{
+    const eligible = captureRows.filter(row=>Date.now()<Date.parse(row.first_pitch_at));
+    if (!eligible.length) {
+      capture.disabled = true;
+      captureStatus.textContent = 'No loaded regular-season starters are still pregame.';
+      return;
+    }
+    exportProjections(eligible,'starter-projections');
+    captureStatus.textContent = 'Saved '+eligible.length+' pregame starter projections.';
+  });
+
+  const archiveKey = 'dev-starter-projections-v1';
+  function readArchive() {
+    try {
+      const rows = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      return rows && typeof rows==='object' && !Array.isArray(rows) ? rows : {};
+    } catch (error) {
+      return {};
+    }
+  }
+  const archive = document.createElement('button');
+  archive.type = 'button';
+  archive.className = 'matchups_submit';
+  function syncArchiveButton(count) {
+    archive.textContent = 'Export saved projections ('+count+')';
+    archive.disabled = !count;
+  }
+  let settledPoints;
+  function refreshSavedHitRates() {
+    if (importedRates || !settledPoints) return;
+    const history = Object.entries(readArchive());
+    const thresholds = [20,30,40].map(score_over=>{
+      const points = history.filter(([,row])=>row.score>score_over &&
+          Date.parse(row.captured_at)<Date.parse(row.first_pitch_at))
+        .map(([key])=>settledPoints[key]).filter(Number.isFinite);
+      return {score_over,hits:points.filter(value=>value>=15).length,starts:points.length};
+    });
+    if (thresholds.some(row=>row.starts)) hasSavedRates = renderHitRates({points_at_least:15,thresholds});
+  }
+  if (localDev) {
+    fetch('assets/preview/starter-results.json')
+      .then(response=>response.ok ? response.json() : null)
+      .then(data=>{
+        settledPoints = data?.starts;
+        refreshSavedHitRates();
+      }).catch(()=>{});
+    syncArchiveButton(Object.keys(readArchive()).length);
+    archive.addEventListener('click',()=>{
+      exportProjections(Object.values(readArchive()),'starter-projection-history');
+    });
+    form_root.append(archive);
+  }
 
   day_obj.sel.value = 'Today';
   if (initial_matchups_params.get('day')) {
@@ -10332,6 +10801,10 @@ if (mode === 'projected_pitchers') {
   //#################
   async function submit() {
     const req_id = ++projected_req_id;
+    captureRows = [];
+    capture.disabled = true;
+    capture.dataset.captureState = 'loading';
+    captureStatus.textContent = '';
 
     clear_results();
     if (!preferred_year) return;
@@ -10377,10 +10850,7 @@ if (mode === 'projected_pitchers') {
         if (!path) continue;
 
         resolved.push({
-          team: p.team,
-          opp: p.opp,
-          side: p.side,
-          pitcher: p.pitcher,
+          ...p,
           path,
         });
       }
@@ -10396,6 +10866,7 @@ if (mode === 'projected_pitchers') {
       }
 
       if (!paths.length) {
+        capture.dataset.captureState = 'empty';
         results_root.innerHTML = `<div style='padding:10px;color:var(--muted);'>No matchups found for ${date_str}.</div>`;
         return;
       }
@@ -10422,13 +10893,44 @@ if (mode === 'projected_pitchers') {
       });
       apply_matchups_table_dividers(results_root, mode, 'default');
       sort_all_results_tables_by_all();
+      const scoredRows = await Promise.all(ordered.filter(row=>row.pregame && row.game_type==='R' &&
+        Number.isInteger(row.game_pk) && Number.isInteger(row.player_id) && Date.now()<Date.parse(row.first_pitch_at))
+        .map(async row=>{
+          const html = await load_matchup_fragment(row.path);
+          const parts = html && extract_table_parts(html);
+          const score = parse_matchup_stat_number(parts?.row_cells?.[header_index(parts?.header_cells,'Score')]);
+          return {...row,score};
+        }));
+      if (req_id !== projected_req_id) return;
+      const capturedAt = new Date();
+      captureRows = scoredRows.filter(row=>Number.isFinite(row.score) && capturedAt.getTime()<Date.parse(row.first_pitch_at))
+        .map(row=>({game_pk:row.game_pk,player_id:row.player_id,score:row.score,
+          captured_at:capturedAt.toISOString(),first_pitch_at:new Date(row.first_pitch_at).toISOString()}));
+      capture.disabled = !captureRows.length;
+      capture.dataset.captureState = captureRows.length ? 'ready' : 'empty';
+      if (localDev && captureRows.length) {
+        try {
+          const history = readArchive();
+          for (const row of captureRows) history[row.game_pk+':'+row.player_id] = row;
+          localStorage.setItem(archiveKey,JSON.stringify(history));
+          syncArchiveButton(Object.keys(history).length);
+          refreshSavedHitRates();
+        } catch (error) {
+          captureStatus.textContent = 'Browser storage unavailable. You can still save the current projections.';
+        }
+      }
 
     } catch (e) {
+      if (req_id === projected_req_id) capture.dataset.captureState = 'error';
       dbg('projected_pitchers submit error', e);
     }
   }
   //#################
   function clear_mode() {
+    ++projected_req_id;
+    captureRows = [];
+    capture.disabled = true;
+    captureStatus.textContent = '';
     clear_results();
     day_obj.sel.value = 'Today';
   if (initial_matchups_params.get('day')) {

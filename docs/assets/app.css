@@ -3567,3 +3567,15 @@ TODAY SCORE BADGES + PROSPECTS
   .snapshot_rankings .snapshot_team img { width: 14px; height: 14px; }
   .prospect_grid select { font-size: 16px; min-height: 40px; }
 }
+
+/* ==================================================================== Player banners ==================================================================== */
+.pilot-player-banner { position:relative;isolation:isolate;overflow:hidden;
+  padding:10px 12px;border:1px solid #75a7b0;border-radius:8px;
+  background:linear-gradient(100deg,#102c40,#164859);color:#fff; }
+.pilot-player-banner::before { content:'';position:absolute;inset:0;z-index:-1;opacity:.18;
+  background:var(--pilot-banner-logo,none) no-repeat right 6px center/auto 120%; }
+.pilot-player-banner .player_name { color:#fff;display:flex;align-items:center;gap:8px; }
+.pilot-player-banner .year_select_label,.pilot-player-banner .player_year_own_pct { color:#e9fbff; }
+.pilot-banner-portrait { width:40px;height:40px;object-fit:contain;border-radius:6px;background:#d8edf1; }
+#dev_banner_toggle { margin-bottom:8px; }
+#dev_banner_toggle[aria-pressed=true] { font-weight:700; }

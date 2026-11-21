@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stats and Matchups Pilot</title>
+<link rel="stylesheet" href="pilot.css">
+<header class="shell">
+  <h1>Stats and Matchups</h1>
+  <nav aria-label="Pilot views">
+    <button data-view="site">Dashboard preview</button><button data-view="depth">MLB depth chart</button>
+    <button data-view="career">Career</button><button data-view="logs">Game log &amp; pitches</button>
+    <button data-view="history">Matchup archive</button><button data-view="trade">Trade</button>
+    <button data-view="free">Free agents</button><button data-view="prospects">Prospects</button>
+    <button data-view="bat-tracking">Bat tracking</button>
+  </nav>
+</header>
+<main class="shell">
+  <section id="site" hidden><h2>Dashboard preview</h2>
+    <label>Page <select id="pilot-route">
+      <option value="home">Home and depth charts</option><option value="today">Today</option>
+      <option value="matchups">Matchups</option><option value="fantasy">Leaderboards</option>
+      <option value="trade">Trade Comparison</option><option value="fantasy_trends">Free Agents</option>
+      <option value="prospects">Prospects</option><option value="LAA-batters-mike-trout">Mike Trout</option><option value="SEA-starters-logan-gilbert">Logan Gilbert</option><option value="WAS-batters-james-wood">James Wood</option>
+    </select></label>
+    <p id="yahoo-preview" hidden><label>Local Yahoo snapshot
+      <input id="yahoo-file" type="file" accept=".json,application/json">
+    </label> <span id="yahoo-status" role="status"></span></p>
+    <label><input type="checkbox" id="player-banner-preview"> Preview player banner</label>
+    <iframe id="base-dashboard" title="Dashboard with pilot photos and glossary"></iframe>
+  </section>
+  <section id="depth" hidden><h2 id="depth-title">Depth chart</h2>
+    <label>Team <select id="depth-team"></select></label>
+    <p><a id="depth-source">MLB depth chart</a> · <span id="depth-status">Loading…</span></p>
+    <div class="scroll" id="depth-table"></div>
+  </section>
+  <section id="career" hidden>
+    <h2>Career</h2><label>Player <select id="career-player"></select></label>
+    <div id="career-traditional"></div>
+    <div id="career-table"></div>
+  </section>
+  <section id="logs" hidden>
+    <div id="season-game-logs" hidden></div>
+    <div id="game-replay" hidden>
+    <h2 id="game-title">Game replay</h2>
+    <p id="game-link"></p>
+    <div class="lineup-bar"><h3>Lineups</h3><label><input type="checkbox" id="posted" checked> Official order posted</label></div>
+    <div id="orders" class="split"></div>
+    <h3>Game points</h3><div id="game-scores" class="scroll"></div>
+    <h3>Pitcher box score</h3><div id="replay-pitchers" class="scroll"></div>
+    <h3>Pitch locations</h3>
+    <div class="toolbar"><label>Pitcher <select id="replay-pitcher"></select></label><label>Plate appearance <select id="at-bat"></select></label><label>Pitch type <select id="pitch-type"></select></label><label><input type="checkbox" id="example-grades"> Sample grades</label></div>
+    <div id="pitch-legend" aria-label="Pitch types"></div>
+    <p class="pitch-note">pVelo adjusts for release extension. The dashboard scale applies to fastballs, sinkers, and cutters.</p>
+    <div class="plot-grid"><svg id="pitch-map" viewBox="0 0 360 360" role="group" aria-label="Pitch locations"></svg>
+      <div><div id="pitch-detail" aria-live="polite"></div><div class="scroll" id="pitch-sequence"></div></div>
+    </div>
+    </div>
+  </section>
+  <section id="history" hidden><h2>Matchup archive pilot</h2>
+    <div class="toolbar"><label>Season <select id="archive-year"></select></label><label>Pitcher <select id="archive-player"></select></label></div>
+    <p id="archive-note"></p><div id="archive-table" class="scroll"></div>
+  </section>
+  <section id="trade" hidden><h2>Trade Comparison</h2>
+    <div class="toolbar"><label>Side A <select id="trade-a"></select></label><label>Side B <select id="trade-b"></select></label><label>Seasons <select id="trade-seasons">
+      <option value="0">Career</option><option value="1">This year</option>
+      <option value="2">Last 2 seasons</option><option value="3">Last 3 seasons</option>
+    </select></label></div>
+    <div id="trade-names" class="split"></div><div id="trade-table" class="scroll"></div>
+  </section>
+  <section id="free" hidden><h2>Free Agents</h2>
+    <div class="toolbar" id="free-modes"><button data-free="Pickups">Pickups</button><button data-free="Buy Low">Buy Low</button><button data-free="Hot Seat">Hot Seat</button></div>
+    <div id="free-table" class="scroll"></div>
+  </section>
+  <section id="prospects" hidden><h2>Prospects</h2>
+    <div class="split">
+      <div><h3>Top 100 with player cards</h3><div id="national" class="scroll"></div></div>
+      <div><h3>Organization top 10</h3>
+        <details id="org-picker"><summary id="org-selected">Organization</summary><div id="org-options"></div></details>
+        <div id="org-table" class="scroll"></div>
+      </div>
+    </div>
+  </section>
+  <section id="bat-tracking" hidden>
+    <h2>Miss distance</h2>
+    <p>Distance from the barrel end of the bat to the ball at closest approach. Tracked whiffs only.</p>
+    <div id="miss-table" class="scroll" role="region" aria-label="Miss-distance summary" tabindex="0"></div>
+    <label>Hitter <select id="miss-hitter"></select></label>
+    <h3>By pitch type</h3>
+    <div id="miss-pitches" class="scroll" role="region" aria-label="Miss distance by pitch type" tabindex="0"></div>
+    <div id="miss-examples" class="scroll" role="region" aria-label="Closest and widest misses" tabindex="0"></div>
+    <p><a href="https://baseballsavant.mlb.com/leaderboard/bat-tracking/swing-timing-miss-distance">Baseball Savant</a> · Six-hitter sample</p>
+  </section>
+  <p id="load-error" role="alert" hidden></p>
+</main>
+<script src="pilot-overlay.js"></script>
+<script src="pilot.js"></script>
+</html>
